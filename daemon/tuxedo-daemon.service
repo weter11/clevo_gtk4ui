@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=tuxedo-daemon
+Exec=/usr/local/bin/tuxedo-daemon
+User=root
