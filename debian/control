@@ -1,0 +1,32 @@
+Source: tuxedo-control-center
+Section: utils
+Priority: optional
+Maintainer: TUXEDO Control Center Team <dev@example.com>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc,
+               libgtk-4-dev,
+               libadwaita-1-dev,
+               pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/tuxedo/control-center
+
+Package: tuxedo-control-center
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         libgtk-4-1,
+         libadwaita-1-0,
+         dbus,
+         systemd,
+         policykit-1
+Recommends: tuxedo-drivers
+Description: Hardware control application for TUXEDO/Clevo laptops
+ TUXEDO Control Center provides a modern interface for controlling
+ hardware features on TUXEDO and Clevo laptops including:
+  - CPU frequency and power management
+  - GPU control
+  - Fan curves
+  - Keyboard backlight
+  - Profile management
+ .
+ This package includes both the GUI application and the system daemon.

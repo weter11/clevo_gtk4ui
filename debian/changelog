@@ -1,0 +1,13 @@
+tuxedo-control-center (0.1.0-1) noble; urgency=medium
+
+  * Initial release
+  * Direct sysfs hardware access
+  * GTK 4.14 + Libadwaita 1.5 interface
+  * DBus daemon architecture
+  * CPU frequency and governor control
+  * AMD pstate status management
+  * Fan curve configuration
+  * Profile management system
+  * Auto-switching profiles based on applications
+
+ -- TUXEDO Control Center Team <dev@example.com>  Sat, 14 Dec 2024 00:00:00 +0000

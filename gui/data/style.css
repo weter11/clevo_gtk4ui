@@ -1,0 +1,42 @@
+## gui/data/style.css
+```css
+/* TUXEDO Control Center Custom Styles */
+
+.section-header {
+    font-weight: bold;
+    font-size: 1.2em;
+    margin-top: 12px;
+    margin-bottom: 6px;
+}
+
+.stat-label {
+    font-family: monospace;
+    font-size: 0.9em;
+}
+
+.profile-card {
+    padding: 12px;
+    margin: 6px 0;
+    border-radius: 8px;
+    background: rgba(128, 128, 128, 0.1);
+}
+
+.profile-card:hover {
+    background: rgba(128, 128, 128, 0.2);
+}
+
+.current-profile {
+    border: 2px solid @accent_color;
+}
+
+.warning-text {
+    color: @warning_color;
+}
+
+.error-text {
+    color: @error_color;
+}
+
+.success-text {
+    color: @success_color;
+}

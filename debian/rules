@@ -1,0 +1,35 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --all
+
+override_dh_auto_install:
+	# Install daemon
+	install -D -m 755 target/release/tuxedo-daemon debian/tuxedo-control-center/usr/bin/tuxedo-daemon
+	
+	# Install GUI
+	install -D -m 755 target/release/tuxedo-control-center debian/tuxedo-control-center/usr/bin/tuxedo-control-center
+	
+	# Install systemd service
+	install -D -m 644 debian/tuxedo-daemon.service debian/tuxedo-control-center/lib/systemd/system/tuxedo-daemon.service
+	
+	# Install DBus service file
+	install -D -m 644 debian/com.tuxedo.Control.service debian/tuxedo-control-center/usr/share/dbus-1/system-services/com.tuxedo.Control.service
+	
+	# Install DBus policy
+	install -D -m 644 debian/com.tuxedo.Control.conf debian/tuxedo-control-center/usr/share/dbus-1/system.d/com.tuxedo.Control.conf
+	
+	# Install desktop file
+	install -D -m 644 debian/tuxedo-control-center.desktop debian/tuxedo-control-center/usr/share/applications/com.tuxedo.ControlCenter.desktop
+	
+	# Install icon
+	install -D -m 644 debian/icon.svg debian/tuxedo-control-center/usr/share/icons/hicolor/scalable/apps/tuxedo-control-center.svg
+
+override_dh_auto_clean:
+	cargo clean || true
+
+override_dh_auto_test:
+	# Skip tests for now

@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=com.tuxedo.Control
+Exec=/usr/local/bin/tuxedo-daemon
+User=root
+SystemdService=com.tuxedo.Control.service
