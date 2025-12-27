@@ -39,4 +39,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: clevo-gtk4ui-binary
-        path: target/release/clevo_gtk4ui
+        path: target/release/tuxedo-control-center
