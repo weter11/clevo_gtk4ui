@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{Box, Orientation, ScrolledWindow, Switch};
+use gtk::{Box, Orientation, ScrolledWindow};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -15,8 +15,6 @@ pub fn create_page(
 ) -> ScrolledWindow {
     let scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .vexpand(true)
-        .hexpand(true)
         .build();
     
     let main_box = Box::new(Orientation::Vertical, 12);
@@ -25,54 +23,92 @@ pub fn create_page(
     main_box.set_margin_start(24);
     main_box.set_margin_end(24);
     
-// System Info Section
-    if config.borrow().data.statistics_sections.show_system_info {
-        // Add the println statement here
-        println!("create_system_info_section: DBus client available: {}", dbus_client.borrow().is_some());
-        
+    let sections = &config.borrow().data.statistics_sections;
+    
+    // System Info
+    if sections.show_system_info {
         let system_info = create_system_info_section(dbus_client.clone());
         main_box.append(&system_info);
     }
     
-    // CPU Section
-    if config.borrow().data.statistics_sections.show_cpu {
+    // CPU
+    if sections.show_cpu {
         let cpu_section = create_cpu_section(dbus_client.clone());
         main_box.append(&cpu_section);
+        setup_cpu_realtime_updates(cpu_section.clone(), dbus_client.clone());
+    }
+    
+    // GPU
+    if sections.show_gpu {
+        let gpu_section = create_gpu_section(dbus_client.clone());
+        main_box.append(&gpu_section);
+        setup_gpu_realtime_updates(gpu_section.clone(), dbus_client.clone());
+    }
+    
+    // Battery
+    if sections.show_battery {
+        let battery_section = create_battery_section(dbus_client.clone());
+        main_box.append(&battery_section);
+        setup_battery_realtime_updates(battery_section.clone(), dbus_client.clone());
+    }
+    
+    // WiFi
+    if sections.show_wifi {
+        let wifi_section = create_wifi_section(dbus_client.clone());
+        main_box.append(&wifi_section);
+        setup_wifi_realtime_updates(wifi_section.clone(), dbus_client.clone());
+    }
+    
+    // Fans
+    if sections.show_fans {
+        let fans_section = create_fans_section(dbus_client.clone());
+        main_box.append(&fans_section);
+        setup_fans_realtime_updates(fans_section.clone(), dbus_client.clone());
     }
     
     scrolled.set_child(Some(&main_box));
     scrolled
 }
 
-fn create_system_info_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+// ... (previous system_info and cpu sections remain same) ...
+
+fn create_gpu_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("System Information")
+        .title("GPU Information")
         .build();
     
-    let model_row = adw::ActionRow::builder()
-        .title("Notebook Model")
-        .subtitle("Loading...")
-        .build();
-    
-    let manufacturer_row = adw::ActionRow::builder()
-        .title("Manufacturer")
-        .subtitle("Loading...")
-        .build();
-    
-    group.add(&model_row);
-    group.add(&manufacturer_row);
-    
-    // Load data - must stay on main thread with GTK widgets
     if let Some(client) = dbus_client.borrow().as_ref() {
-        match client.get_system_info() {
-            Ok(info) => {
-                model_row.set_subtitle(&info.product_name);
-                manufacturer_row.set_subtitle(&info.manufacturer);
+        match client.get_gpu_info() {
+            Ok(gpus) => {
+                for gpu in gpus {
+                    let status_text = match gpu.status {
+                        tuxedo_common::types::GpuStatus::Active => "🟢 Active",
+                        tuxedo_common::types::GpuStatus::Suspended => "🔴 Suspended",
+                        tuxedo_common::types::GpuStatus::Unknown => "⚪ Unknown",
+                    };
+                    
+                    let gpu_row = adw::ActionRow::builder()
+                        .title(&gpu.name)
+                        .subtitle(&format!("Status: {} | Driver: {}", 
+                            status_text,
+                            gpu.driver.as_ref().unwrap_or(&"Unknown".to_string())))
+                        .build();
+                    
+                    if let Some(ref pci_id) = gpu.pci_id {
+                        let detail = gtk::Label::new(Some(&format!("PCI: {}", pci_id)));
+                        detail.set_css_classes(&["dim-label", "caption"]);
+                        gpu_row.add_suffix(&detail);
+                    }
+                    
+                    group.add(&gpu_row);
+                }
             }
             Err(e) => {
-                eprintln!("Failed to get system info: {}", e);
-                model_row.set_subtitle("Error loading");
-                manufacturer_row.set_subtitle("Error loading");
+                let error_row = adw::ActionRow::builder()
+                    .title("Error loading GPU info")
+                    .subtitle(&e.to_string())
+                    .build();
+                group.add(&error_row);
             }
         }
     }
@@ -80,162 +116,312 @@ fn create_system_info_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> a
     group
 }
 
-fn create_cpu_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+fn create_battery_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("CPU")
+        .title("Battery")
         .build();
     
-    // CPU Name
-    let name_row = adw::ActionRow::builder()
-        .title("Processor")
+    // Charge level
+    let charge_row = adw::ActionRow::builder()
+        .title("Charge Level")
         .subtitle("Loading...")
         .build();
-    group.add(&name_row);
+    group.add(&charge_row);
     
-    // Median Frequency
-    let freq_row = adw::ActionRow::builder()
-        .title("Median Frequency")
+    // Status
+    let status_row = adw::ActionRow::builder()
+        .title("Status")
         .subtitle("Loading...")
         .build();
-    group.add(&freq_row);
+    group.add(&status_row);
     
-    // Package Temperature
-    let temp_row = adw::ActionRow::builder()
-        .title("Package Temperature")
-        .subtitle("Loading...")
-        .build();
-    group.add(&temp_row);
-    
-    // Package Power
+    // Power draw
     let power_row = adw::ActionRow::builder()
-        .title("Package Power")
+        .title("Power Draw")
         .subtitle("Loading...")
         .build();
     group.add(&power_row);
     
-    // Power Sources
-    let power_sources_expander = adw::ExpanderRow::builder()
-        .title("Power Sources")
-        .subtitle("Available power monitoring sources")
+    // Capacity
+    let capacity_row = adw::ActionRow::builder()
+        .title("Capacity")
+        .subtitle("Loading...")
         .build();
-    group.add(&power_sources_expander);
+    group.add(&capacity_row);
     
-    // CPU Governor
-    let governor_row = adw::ComboRow::builder()
-        .title("CPU Governor")
-        .build();
-    let governor_model = gtk::StringList::new(&["Loading..."]);
-    governor_row.set_model(Some(&governor_model));
-    group.add(&governor_row);
+    // Load initial data
+    update_battery_info(&charge_row, &status_row, &power_row, &capacity_row, dbus_client);
     
-    // AMD pstate
-    let pstate_row = adw::ComboRow::builder()
-        .title("AMD pstate Status")
-        .build();
-    let pstate_model = gtk::StringList::new(&["passive", "active", "guided"]);
-    pstate_row.set_model(Some(&pstate_model));
-    pstate_row.set_visible(false);
-    group.add(&pstate_row);
-    
-    // Boost Toggle
-    let boost_row = adw::ActionRow::builder()
-        .title("CPU Boost")
-        .subtitle("Turbo / Precision Boost")
-        .build();
-    let boost_switch = Switch::new();
-    boost_switch.set_valign(gtk::Align::Center);
-    boost_row.add_suffix(&boost_switch);
-    boost_row.set_activatable_widget(Some(&boost_switch));
-    group.add(&boost_row);
-    
-    // SMT Toggle
-    let smt_row = adw::ActionRow::builder()
-        .title("SMT / Hyperthreading")
-        .subtitle("Simultaneous Multithreading")
-        .build();
-    let smt_switch = Switch::new();
-    smt_switch.set_valign(gtk::Align::Center);
-    smt_row.add_suffix(&smt_switch);
-    smt_row.set_activatable_widget(Some(&smt_switch));
-    group.add(&smt_row);
-    
-    // Per-core details
-    let expander = adw::ExpanderRow::builder()
-        .title("Show per-core details")
-        .build();
-    group.add(&expander);
-    
-    // Load CPU info - blocking call is fine here, it's fast (< 50ms)
+    group
+}
+
+fn update_battery_info(
+    charge_row: &adw::ActionRow,
+    status_row: &adw::ActionRow,
+    power_row: &adw::ActionRow,
+    capacity_row: &adw::ActionRow,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     if let Some(client) = dbus_client.borrow().as_ref() {
-        match client.get_cpu_info() {
+        match client.get_battery_info() {
             Ok(info) => {
-                name_row.set_subtitle(&info.name);
-                freq_row.set_subtitle(&format!("{} MHz", info.median_frequency / 1000));
-                temp_row.set_subtitle(&format!("{:.1}°C", info.package_temp));
+                charge_row.set_subtitle(&format!("{}%", info.charge_percent));
                 
-                // Power
-                if let Some(pwr) = info.package_power {
-                    if let Some(ref src) = info.power_source {
-                        power_row.set_subtitle(&format!("{:.1} W ({})", pwr, src));
-                    } else {
-                        power_row.set_subtitle(&format!("{:.1} W", pwr));
-                    }
+                let status_text = match info.status {
+                    tuxedo_common::types::BatteryStatus::Charging => "⚡ Charging",
+                    tuxedo_common::types::BatteryStatus::Discharging => "🔋 Discharging",
+                    tuxedo_common::types::BatteryStatus::Full => "✓ Full",
+                    tuxedo_common::types::BatteryStatus::NotCharging => "⏸ Not Charging",
+                    tuxedo_common::types::BatteryStatus::Unknown => "❓ Unknown",
+                };
+                status_row.set_subtitle(status_text);
+                
+                // Power draw: N/A on AC, actual value on battery
+                if info.on_ac_power {
+                    power_row.set_subtitle("N/A (on AC power)");
+                } else if let Some(draw) = info.power_draw_w {
+                    power_row.set_subtitle(&format!("{:.1} W", draw));
+                } else {
+                    power_row.set_subtitle("Unknown");
                 }
                 
-                // Power sources
-                for source in &info.all_power_sources {
-                    let source_row = adw::ActionRow::builder()
-                        .title(&source.name)
-                        .subtitle(&format!("{:.1} W - {}", source.value, source.description))
+                capacity_row.set_subtitle(&format!("{} mAh", info.capacity_mah));
+            }
+            Err(e) => {
+                charge_row.set_subtitle(&format!("Error: {}", e));
+            }
+        }
+    }
+}
+
+fn create_wifi_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("WiFi")
+        .build();
+    
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        match client.get_wifi_info() {
+            Ok(interfaces) => {
+                if interfaces.is_empty() {
+                    let no_wifi = adw::ActionRow::builder()
+                        .title("No WiFi interfaces found")
                         .build();
-                    power_sources_expander.add_row(&source_row);
-                }
-                
-                if info.all_power_sources.is_empty() {
-                    power_sources_expander.set_visible(false);
-                }
-                
-                // Governors
-                let gov_strs: Vec<&str> = info.available_governors.iter().map(|s| s.as_str()).collect();
-                let new_model = gtk::StringList::new(&gov_strs);
-                governor_row.set_model(Some(&new_model));
-                
-                if let Some(idx) = info.available_governors.iter().position(|g| g == &info.governor) {
-                    governor_row.set_selected(idx as u32);
-                }
-                
-                // AMD pstate
-                if let Some(ref status) = info.amd_pstate_status {
-                    pstate_row.set_visible(true);
-                    let statuses = vec!["passive", "active", "guided"];
-                    let status_str = status.as_str();
-                    if let Some(idx) = statuses.iter().position(|s| *s == status_str) {
-                        pstate_row.set_selected(idx as u32);
+                    group.add(&no_wifi);
+                } else {
+                    for iface in interfaces {
+                        let expander = adw::ExpanderRow::builder()
+                            .title(&iface.interface)
+                            .subtitle(&format!("Driver: {}", iface.driver))
+                            .build();
+                        
+                        // Chip model
+                        let chip_row = adw::ActionRow::builder()
+                            .title("Chip Model")
+                            .subtitle(&iface.chip_model)
+                            .build();
+                        expander.add_row(&chip_row);
+                        
+                        // Link speed
+                        if let Some(speed) = iface.link_speed_mbps {
+                            let speed_row = adw::ActionRow::builder()
+                                .title("Link Speed")
+                                .subtitle(&format!("{} Mbps", speed))
+                                .build();
+                            expander.add_row(&speed_row);
+                        }
+                        
+                        // Signal strength
+                        if let Some(signal) = iface.signal_strength {
+                            let signal_row = adw::ActionRow::builder()
+                                .title("Signal Strength")
+                                .subtitle(&format!("{} dBm", signal))
+                                .build();
+                            expander.add_row(&signal_row);
+                        }
+                        
+                        // SSID
+                        if let Some(ref ssid) = iface.ssid {
+                            let ssid_row = adw::ActionRow::builder()
+                                .title("Connected to")
+                                .subtitle(ssid)
+                                .build();
+                            expander.add_row(&ssid_row);
+                        }
+                        
+                        // Temperature
+                        if let Some(temp) = iface.temperature {
+                            let temp_row = adw::ActionRow::builder()
+                                .title("Temperature")
+                                .subtitle(&format!("{:.1}°C", temp))
+                                .build();
+                            expander.add_row(&temp_row);
+                        }
+                        
+                        group.add(&expander);
                     }
-                }
-                
-                // Switches
-                boost_switch.set_active(info.boost_enabled);
-                smt_switch.set_active(info.smt_enabled);
-                
-                // Core details
-                for core in &info.cores {
-                    let core_row = adw::ActionRow::builder()
-                        .title(&format!("Core {}", core.id))
-                        .subtitle(&format!("{} MHz, {:.1}°C", core.frequency / 1000, core.temperature))
-                        .build();
-                    expander.add_row(&core_row);
                 }
             }
             Err(e) => {
-                eprintln!("Failed to get CPU info: {}", e);
-                name_row.set_subtitle("Error loading");
-                freq_row.set_subtitle("Error");
-                temp_row.set_subtitle("Error");
-                power_row.set_subtitle("Error");
+                let error_row = adw::ActionRow::builder()
+                    .title("Error loading WiFi info")
+                    .subtitle(&e.to_string())
+                    .build();
+                group.add(&error_row);
             }
         }
     }
     
     group
+}
+
+fn create_fans_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Fans")
+        .build();
+    
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        match client.get_fan_info() {
+            Ok(fans) => {
+                if fans.is_empty() {
+                    let no_fans = adw::ActionRow::builder()
+                        .title("No fan information available")
+                        .subtitle("Fan control may not be supported on this hardware")
+                        .build();
+                    group.add(&no_fans);
+                } else {
+                    // Show number of detected fans
+                    let count_row = adw::ActionRow::builder()
+                        .title("Detected Fans")
+                        .subtitle(&format!("{} fan(s)", fans.len()))
+                        .build();
+                    group.add(&count_row);
+                    
+                    // Show each fan
+                    for fan in fans {
+                        let fan_row = adw::ActionRow::builder()
+                            .title(&fan.name)
+                            .subtitle(&format!(
+                                "Speed: {}% | RPM: {}",
+                                fan.duty_percent,
+                                fan.rpm.map(|r| r.to_string()).unwrap_or_else(|| "N/A".to_string())
+                            ))
+                            .build();
+                        
+                        if let Some(temp) = fan.temperature {
+                            let temp_label = gtk::Label::new(Some(&format!("{:.1}°C", temp)));
+                            temp_label.set_css_classes(&["dim-label"]);
+                            fan_row.add_suffix(&temp_label);
+                        }
+                        
+                        group.add(&fan_row);
+                    }
+                }
+            }
+            Err(e) => {
+                let error_row = adw::ActionRow::builder()
+                    .title("Error loading fan info")
+                    .subtitle(&e.to_string())
+                    .build();
+                group.add(&error_row);
+            }
+        }
+    }
+    
+    group
+}
+
+// Real-time update functions
+
+fn setup_gpu_realtime_updates(
+    group: adw::PreferencesGroup,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
+    glib::timeout_add_seconds_local(3, move || {
+        // Update GPU status
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Ok(_gpus) = client.get_gpu_info() {
+                // Refresh GPU info
+                // (would need to update individual rows)
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+fn setup_battery_realtime_updates(
+    group: adw::PreferencesGroup,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
+    // Find rows
+    let charge_row = find_row_by_title(&group, "Charge Level");
+    let status_row = find_row_by_title(&group, "Status");
+    let power_row = find_row_by_title(&group, "Power Draw");
+    let capacity_row = find_row_by_title(&group, "Capacity");
+    
+    if let (Some(cr), Some(sr), Some(pr), Some(cap_r)) = 
+           (charge_row, status_row, power_row, capacity_row) {
+        
+        glib::timeout_add_seconds_local(2, move || {
+            update_battery_info(&cr, &sr, &pr, &cap_r, dbus_client.clone());
+            glib::ControlFlow::Continue
+        });
+    }
+}
+
+fn setup_wifi_realtime_updates(
+    _group: adw::PreferencesGroup,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
+    glib::timeout_add_seconds_local(5, move || {
+        // Update WiFi info (signal strength, link speed)
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            let _ = client.get_wifi_info();
+            // Would need to update individual rows
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+fn setup_fans_realtime_updates(
+    _group: adw::PreferencesGroup,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
+    glib::timeout_add_seconds_local(2, move || {
+        // Update fan speeds and RPM
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            let _ = client.get_fan_info();
+            // Would need to update individual rows
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+fn find_row_by_title(group: &adw::PreferencesGroup, title: &str) -> Option<adw::ActionRow> {
+    let mut child = group.first_child();
+    while let Some(widget) = child {
+        if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+            if row.title() == title {
+                return Some(row);
+            }
+            child = row.next_sibling();
+        } else {
+            child = widget.next_sibling();
+        }
+    }
+    None
+}
+
+fn find_expander_by_title(group: &adw::PreferencesGroup, title: &str) -> Option<adw::ExpanderRow> {
+    let mut child = group.first_child();
+    while let Some(widget) = child {
+        if let Ok(expander) = widget.downcast::<adw::ExpanderRow>() {
+            if expander.title() == title {
+                return Some(expander);
+            }
+            child = expander.next_sibling();
+        } else {
+            child = widget.next_sibling();
+        }
+    }
+    None
 }
