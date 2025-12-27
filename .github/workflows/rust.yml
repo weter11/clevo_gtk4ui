@@ -26,8 +26,17 @@ jobs:
             libgtk-4-dev \
             libadwaita-1-dev
 
+    - name: Clean the project
+      run: cargo clean 
+
     - name: Build the project
       run: cargo build --verbose
 
     - name: Run tests
       run: cargo test --verbose
+
+    - name: Upload compiled binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: clevo-gtk4ui-binary  # The name of the artifact (you can customize this)
+        path: target/release/clevo_gtk4ui  # The path to your compiled binary
