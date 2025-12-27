@@ -17,10 +17,19 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install dependencies for GTK4 and glib
-  run: |
-    sudo apt-get update
-    sudo apt-get install -y libglib2.0-dev pkg-config libgtk-4-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libdbus-1-dev \
+            pkg-config \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            gettext \
+            meson \
+            ninja-build \
+            desktop-file-utils \
+            appstream
 
     - name: Build
       run: cargo build --verbose
