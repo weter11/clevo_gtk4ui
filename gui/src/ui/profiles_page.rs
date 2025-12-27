@@ -14,6 +14,8 @@ pub fn create_page(
 ) -> ScrolledWindow {
     let scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .hexpand(true)
         .build();
     
     let main_box = Box::new(Orientation::Vertical, 12);
