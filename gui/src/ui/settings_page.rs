@@ -10,6 +10,8 @@ use crate::config::Config;
 pub fn create_page(config: Rc<RefCell<Config>>) -> ScrolledWindow {
     let scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .hexpand(true)
         .build();
     
     let main_box = Box::new(Orientation::Vertical, 12);
