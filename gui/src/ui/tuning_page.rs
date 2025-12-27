@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use crate::config::Config;
 use crate::dbus_client::DbusClient;
+use crate::ui::fan_curve_editor::{FanCurveEditor, FanCurvePoint};
 
 pub fn create_page(
     config: Rc<RefCell<Config>>,
@@ -411,49 +412,57 @@ fn create_screen_section(profile: &tuxedo_common::types::Profile) -> adw::Prefer
 
 fn create_fans_section(
     profile: &tuxedo_common::types::Profile,
-    _config: Rc<RefCell<Config>>,
+    config: Rc<RefCell<Config>>,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Fan Control")
         .build();
     
+    // Control switch
     let control_row = adw::SwitchRow::builder()
         .title("Manual fan control")
-        .subtitle("Use custom fan curves (disable for auto mode)")
+        .subtitle("Use custom fan curves")
         .build();
-    
     control_row.set_active(profile.fan_settings.control_enabled);
     group.add(&control_row);
     
-    if profile.fan_settings.control_enabled {
-        // Show configured curves
-        for curve in &profile.fan_settings.curves {
-            let curve_expander = adw::ExpanderRow::builder()
-                .title(&format!("Fan {} Curve", curve.fan_id))
-                .subtitle(&format!("{} points configured", curve.points.len()))
-                .build();
-            
-            // Display curve points
-            for (idx, (temp, speed)) in curve.points.iter().enumerate() {
-                let point_row = adw::ActionRow::builder()
-                    .title(&format!("Point {}", idx + 1))
-                    .subtitle(&format!("{}°C → {}% speed", temp, speed))
-                    .build();
-                curve_expander.add_row(&point_row);
-            }
-            
-            group.add(&curve_expander);
-        }
+    // Add graphical editor for each fan curve
+    for curve in &profile.fan_settings.curves {
+        let curve_expander = adw::ExpanderRow::builder()
+            .title(&format!("Fan {} Curve", curve.fan_id))
+            .build();
         
-        // Add new curve button
-        let add_curve_button = gtk::Button::with_label("➕ Add Fan Curve");
-        let add_box = Box::new(Orientation::Horizontal, 0);
-        add_box.set_halign(gtk::Align::Start);
-        add_box.append(&add_curve_button);
+        // Convert curve points to editor format
+        let editor_points: Vec<FanCurvePoint> = curve.points
+            .iter()
+            .map(|(temp, speed)| FanCurvePoint {
+                temperature: *temp,
+                speed: *speed,
+            })
+            .collect();
         
-        let button_row = adw::ActionRow::new();
-        button_row.set_child(Some(&add_box));
-        group.add(&button_row);
+        let editor = FanCurveEditor::new(editor_points);
+        
+        // Add editor widget to expander
+        let editor_box = Box::new(Orientation::Vertical, 12);
+        editor_box.append(&editor.widget);
+        
+        // Save button
+        let save_btn = Button::with_label("Save Curve");
+        let editor_clone = editor.clone();
+        let config_clone = config.clone();
+        save_btn.connect_clicked(move |_| {
+            let points = editor_clone.get_points();
+            // Update config with new curve points
+            // ... implementation
+        });
+        editor_box.append(&save_btn);
+        
+        curve_expander.add_row(&adw::ActionRow::builder()
+            .child(&editor_box)
+            .build());
+        
+        group.add(&curve_expander);
     }
     
     group
