@@ -327,15 +327,3 @@ pub fn set_energy_performance_preference(epp: &str) -> Result<()> {
     log::info!("Set energy performance preference to: {}", epp);
     Ok(())
 }
-
-fn get_cpu_count() -> Result<u32> {
-    let mut count = 0;
-    for i in 0..1024 {
-        let path = format!("/sys/devices/system/cpu/cpu{}", i);
-        if !Path::new(&path).exists() {
-            break;
-        }
-        count += 1;
-    }
-    Ok(count)
-}
