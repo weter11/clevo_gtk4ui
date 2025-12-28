@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{Box, Orientation, ScrolledWindow, Switch};
+use gtk::{Box, Orientation, ScrolledWindow};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -15,6 +15,8 @@ pub fn create_page(
 ) -> ScrolledWindow {
     let scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .hexpand(true)
         .build();
     
     let main_box = Box::new(Orientation::Vertical, 12);
@@ -23,26 +25,72 @@ pub fn create_page(
     main_box.set_margin_start(24);
     main_box.set_margin_end(24);
     
-// System Info Section
+    let mut widgets = Vec::new();
+    
     if config.borrow().data.statistics_sections.show_system_info {
-        // Add the println statement here
-        println!("create_system_info_section: DBus client available: {}", dbus_client.borrow().is_some());
-        
-        let system_info = create_system_info_section(dbus_client.clone());
-        main_box.append(&system_info);
+        let (group, refs) = create_system_info_section();
+        main_box.append(&group);
+        widgets.push(("system", refs));
     }
     
-    // CPU Section
     if config.borrow().data.statistics_sections.show_cpu {
-        let cpu_section = create_cpu_section(dbus_client.clone());
-        main_box.append(&cpu_section);
+        let (group, refs) = create_cpu_section();
+        main_box.append(&group);
+        widgets.push(("cpu", refs));
+    }
+    
+    if config.borrow().data.statistics_sections.show_gpu {
+        let group = create_gpu_section();
+        main_box.append(&group);
+    }
+    
+    if config.borrow().data.statistics_sections.show_battery {
+        let (group, refs) = create_battery_section();
+        main_box.append(&group);
+        widgets.push(("battery", refs));
+    }
+    
+    if config.borrow().data.statistics_sections.show_wifi {
+        let group = create_wifi_section();
+        main_box.append(&group);
+    }
+    
+    if config.borrow().data.statistics_sections.show_storage {
+        let group = create_storage_section();
+        main_box.append(&group);
+    }
+    
+    if config.borrow().data.statistics_sections.show_fans {
+        let (group, refs) = create_fans_section();
+        main_box.append(&group);
+        widgets.push(("fans", refs));
     }
     
     scrolled.set_child(Some(&main_box));
+    
+    let dbus_clone = dbus_client.clone();
+    glib::timeout_add_seconds_local(2, move || {
+        update_statistics(&widgets, dbus_clone.clone());
+        glib::ControlFlow::Continue
+    });
+    
     scrolled
 }
 
-fn create_system_info_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+type WidgetRefs = Vec<(String, adw::ActionRow)>;
+
+fn update_statistics(widgets: &[((&str, WidgetRefs))], dbus_client: Rc<RefCell<Option<DbusClient>>>) {
+    for (section_type, refs) in widgets {
+        match *section_type {
+            "cpu" => update_cpu_info(refs, dbus_client.clone()),
+            "battery" => update_battery_info(refs),
+            "fans" => update_fans_info(refs),
+            _ => {}
+        }
+    }
+}
+
+fn create_system_info_section() -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
         .title("System Information")
         .build();
@@ -57,20 +105,547 @@ fn create_system_info_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> a
         .subtitle("Loading...")
         .build();
     
+    let bios_row = adw::ActionRow::builder()
+        .title("BIOS Version")
+        .subtitle("Loading...")
+        .build();
+    
     group.add(&model_row);
     group.add(&manufacturer_row);
+    group.add(&bios_row);
     
-    // Load data - must stay on main thread with GTK widgets
+    let refs = vec![
+        ("model".to_string(), model_row),
+        ("manufacturer".to_string(), manufacturer_row),
+        ("bios".to_string(), bios_row),
+    ];
+    
+    (group, refs)
+}
+
+fn create_cpu_section() -> (adw::PreferencesGroup, WidgetRefs) {
+    let group = adw::PreferencesGroup::builder()
+        .title("CPU")
+        .build();
+    
+    let name_row = adw::ActionRow::builder()
+        .title("Processor")
+        .subtitle("Loading...")
+        .build();
+    group.add(&name_row);
+    
+    let freq_row = adw::ActionRow::builder()
+        .title("Median Frequency")
+        .subtitle("Loading...")
+        .build();
+    group.add(&freq_row);
+    
+    let load_row = adw::ActionRow::builder()
+        .title("Median Load")
+        .subtitle("Loading...")
+        .build();
+    group.add(&load_row);
+    
+    let temp_row = adw::ActionRow::builder()
+        .title("Package Temperature")
+        .subtitle("Loading...")
+        .build();
+    group.add(&temp_row);
+    
+    let power_row = adw::ActionRow::builder()
+        .title("Package Power")
+        .subtitle("Loading...")
+        .build();
+    group.add(&power_row);
+    
+    let scaling_driver_row = adw::ActionRow::builder()
+        .title("Scaling Driver")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&scaling_driver_row);
+    
+    let governor_row = adw::ActionRow::builder()
+        .title("CPU Governor")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&governor_row);
+    
+    let epp_row = adw::ActionRow::builder()
+        .title("Energy Performance Preference")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&epp_row);
+    
+    let boost_row = adw::ActionRow::builder()
+        .title("CPU Boost")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&boost_row);
+    
+    let smt_row = adw::ActionRow::builder()
+        .title("SMT / Hyperthreading")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&smt_row);
+    
+    let amd_pstate_row = adw::ActionRow::builder()
+        .title("AMD Pstate Mode")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&amd_pstate_row);
+    
+    let refs = vec![
+        ("name".to_string(), name_row),
+        ("freq".to_string(), freq_row),
+        ("load".to_string(), load_row),
+        ("temp".to_string(), temp_row),
+        ("power".to_string(), power_row),
+        ("scaling_driver".to_string(), scaling_driver_row),
+        ("governor".to_string(), governor_row),
+        ("epp".to_string(), epp_row),
+        ("boost".to_string(), boost_row),
+        ("smt".to_string(), smt_row),
+        ("amd_pstate".to_string(), amd_pstate_row),
+    ];
+    
+    (group, refs)
+}
+
+fn update_cpu_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>>>) {
     if let Some(client) = dbus_client.borrow().as_ref() {
-        match client.get_system_info() {
-            Ok(info) => {
-                model_row.set_subtitle(&info.product_name);
-                manufacturer_row.set_subtitle(&info.manufacturer);
+        if let Ok(info) = client.get_cpu_info() {
+            let caps = &info.capabilities;
+            
+            for (key, row) in refs {
+                match key.as_str() {
+                    "name" => {
+                        row.set_subtitle(&info.name);
+                        row.set_visible(true);
+                    }
+                    "freq" => {
+                        row.set_subtitle(&format!("{} MHz", info.median_frequency / 1000));
+                        row.set_visible(true);
+                    }
+                    "load" => {
+                        row.set_subtitle(&format!("{:.1}%", info.median_load));
+                        row.set_visible(true);
+                    }
+                    "temp" => {
+                        row.set_subtitle(&format!("{:.1}°C", info.package_temp));
+                        row.set_visible(true);
+                    }
+                    "power" => {
+                        if let Some(pwr) = info.package_power {
+                            if let Some(ref src) = info.power_source {
+                                row.set_subtitle(&format!("{:.1} W ({})", pwr, src));
+                            } else {
+                                row.set_subtitle(&format!("{:.1} W", pwr));
+                            }
+                            row.set_visible(true);
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "scaling_driver" => {
+                        if caps.has_scaling_driver && info.scaling_driver != "not_available" {
+                            row.set_subtitle(&info.scaling_driver);
+                            row.set_visible(true);
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "governor" => {
+                        if caps.has_scaling_governor && info.governor != "not_available" {
+                            row.set_subtitle(&info.governor);
+                            row.set_visible(true);
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "epp" => {
+                        if caps.has_energy_performance_preference {
+                            if let Some(ref epp) = info.energy_performance_preference {
+                                row.set_subtitle(epp);
+                                row.set_visible(true);
+                            } else {
+                                row.set_visible(false);
+                            }
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "boost" => {
+                        if caps.has_boost {
+                            row.set_subtitle(if info.boost_enabled { "Enabled" } else { "Disabled" });
+                            row.set_visible(true);
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "smt" => {
+                        if caps.has_smt {
+                            row.set_subtitle(if info.smt_enabled { "Enabled" } else { "Disabled" });
+                            row.set_visible(true);
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    "amd_pstate" => {
+                        if caps.has_amd_pstate {
+                            if let Some(ref status) = info.amd_pstate_status {
+                                row.set_subtitle(&format!("{} mode", status));
+                                row.set_visible(true);
+                            } else {
+                                row.set_visible(false);
+                            }
+                        } else {
+                            row.set_visible(false);
+                        }
+                    }
+                    _ => {}
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to get system info: {}", e);
-                model_row.set_subtitle("Error loading");
-                manufacturer_row.set_subtitle("Error loading");
+        }
+    }
+}
+
+fn create_gpu_section() -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("GPU")
+        .build();
+    
+    let mut gpus_found = false;
+    
+    for i in 128..132 {
+        let render_path = format!("/sys/class/drm/renderD{}", i);
+        if std::path::Path::new(&render_path).exists() {
+            if let Some(gpu_info) = detect_gpu_info(&render_path, i - 128) {
+                let gpu_row = adw::ActionRow::builder()
+                    .title(&gpu_info.name)
+                    .subtitle(&gpu_info.status)
+                    .build();
+                group.add(&gpu_row);
+                gpus_found = true;
+            }
+        }
+    }
+    
+    if !gpus_found {
+        for i in 0..4 {
+            let card_path = format!("/sys/class/drm/card{}", i);
+            if std::path::Path::new(&card_path).exists() {
+                if let Some(gpu_info) = detect_gpu_info(&card_path, i) {
+                    let gpu_row = adw::ActionRow::builder()
+                        .title(&gpu_info.name)
+                        .subtitle(&gpu_info.status)
+                        .build();
+                    group.add(&gpu_row);
+                    gpus_found = true;
+                }
+            }
+        }
+    }
+    
+    if !gpus_found {
+        let no_gpu_row = adw::ActionRow::builder()
+            .title("No GPU detected")
+            .build();
+        group.add(&no_gpu_row);
+    }
+    
+    group
+}
+
+struct SimpleGpuInfo {
+    name: String,
+    status: String,
+}
+
+fn detect_gpu_info(path: &str, id: u32) -> Option<SimpleGpuInfo> {
+    let device_path = format!("{}/device", path);
+    
+    let vendor_path = format!("{}/vendor", device_path);
+    let vendor_id = std::fs::read_to_string(&vendor_path)
+        .ok()?
+        .trim()
+        .to_string();
+    
+    let vendor_name = match vendor_id.as_str() {
+        "0x1002" => "AMD",
+        "0x10de" => "NVIDIA",
+        "0x8086" => "Intel",
+        _ => "Unknown",
+    };
+    
+    let device_name = format!("{} Graphics {}", vendor_name, id);
+    
+    let gpu_type = if id == 0 {
+        "Integrated"
+    } else {
+        "Discrete"
+    };
+    
+    let power_status_path = format!("{}/power/runtime_status", device_path);
+    let power_status = std::fs::read_to_string(&power_status_path)
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string();
+    
+    let status_text = match power_status.as_str() {
+        "active" => format!("{} - Active", gpu_type),
+        "suspended" => format!("{} - Suspended", gpu_type),
+        _ => format!("{} - {}", gpu_type, power_status),
+    };
+    
+    Some(SimpleGpuInfo {
+        name: device_name,
+        status: status_text,
+    })
+}
+
+fn create_battery_section() -> (adw::PreferencesGroup, WidgetRefs) {
+    let group = adw::PreferencesGroup::builder()
+        .title("Battery")
+        .build();
+    
+    let status_row = adw::ActionRow::builder()
+        .title("Status")
+        .subtitle("Loading...")
+        .build();
+    group.add(&status_row);
+    
+    let capacity_row = adw::ActionRow::builder()
+        .title("Capacity")
+        .subtitle("Loading...")
+        .build();
+    group.add(&capacity_row);
+    
+    let voltage_row = adw::ActionRow::builder()
+        .title("Voltage")
+        .subtitle("Loading...")
+        .build();
+    group.add(&voltage_row);
+    
+    let current_row = adw::ActionRow::builder()
+        .title("Current")
+        .subtitle("Loading...")
+        .build();
+    group.add(&current_row);
+    
+    let power_row = adw::ActionRow::builder()
+        .title("Power Draw")
+        .subtitle("Loading...")
+        .build();
+    group.add(&power_row);
+    
+    let refs = vec![
+        ("status".to_string(), status_row),
+        ("capacity".to_string(), capacity_row),
+        ("voltage".to_string(), voltage_row),
+        ("current".to_string(), current_row),
+        ("power".to_string(), power_row),
+    ];
+    
+    (group, refs)
+}
+
+fn update_battery_info(refs: &WidgetRefs) {
+    let battery_path = if std::path::Path::new("/sys/class/power_supply/BAT0").exists() {
+        "/sys/class/power_supply/BAT0"
+    } else if std::path::Path::new("/sys/class/power_supply/BAT1").exists() {
+        "/sys/class/power_supply/BAT1"
+    } else {
+        for (_, row) in refs {
+            row.set_subtitle("No battery detected");
+        }
+        return;
+    };
+    
+    for (key, row) in refs {
+        match key.as_str() {
+            "status" => {
+                if let Ok(status) = std::fs::read_to_string(format!("{}/status", battery_path)) {
+                    row.set_subtitle(status.trim());
+                }
+            }
+            "capacity" => {
+                if let Ok(capacity) = std::fs::read_to_string(format!("{}/capacity", battery_path)) {
+                    row.set_subtitle(&format!("{}%", capacity.trim()));
+                }
+            }
+            "voltage" => {
+                if let Ok(voltage) = std::fs::read_to_string(format!("{}/voltage_now", battery_path)) {
+                    if let Ok(v) = voltage.trim().parse::<f64>() {
+                        row.set_subtitle(&format!("{:.2} V", v / 1_000_000.0));
+                    }
+                }
+            }
+            "current" => {
+                if let Ok(current) = std::fs::read_to_string(format!("{}/current_now", battery_path)) {
+                    if let Ok(c) = current.trim().parse::<f64>() {
+                        row.set_subtitle(&format!("{:.2} A", c / 1_000_000.0));
+                    }
+                }
+            }
+            "power" => {
+                if let Ok(power) = std::fs::read_to_string(format!("{}/power_now", battery_path)) {
+                    if let Ok(p) = power.trim().parse::<f64>() {
+                        row.set_subtitle(&format!("{:.2} W", p / 1_000_000.0));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn create_wifi_section() -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("WiFi")
+        .build();
+    
+    let mut wifi_found = false;
+    
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            
+            if !path.join("wireless").exists() {
+                continue;
+            }
+            
+            wifi_found = true;
+            
+            let iface_name = entry.file_name().to_string_lossy().to_string();
+            
+            let iface_row = adw::ActionRow::builder()
+                .title(&format!("Interface: {}", iface_name))
+                .build();
+            group.add(&iface_row);
+            
+            let device_path = path.join("device");
+            let uevent_path = device_path.join("uevent");
+            if let Ok(uevent) = std::fs::read_to_string(&uevent_path) {
+                for line in uevent.lines() {
+                    if line.starts_with("DRIVER=") {
+                        let driver = line.trim_start_matches("DRIVER=");
+                        let driver_row = adw::ActionRow::builder()
+                            .title("Driver")
+                            .subtitle(driver)
+                            .build();
+                        group.add(&driver_row);
+                    }
+                }
+            }
+            
+            let modalias_path = device_path.join("modalias");
+            if let Ok(modalias) = std::fs::read_to_string(&modalias_path) {
+                if modalias.starts_with("pci:") {
+                    if let Some(vendor_device) = extract_pci_ids(&modalias) {
+                        let chip_name = get_wifi_chip_name(&vendor_device);
+                        let chip_row = adw::ActionRow::builder()
+                            .title("Chip")
+                            .subtitle(&chip_name)
+                            .build();
+                        group.add(&chip_row);
+                    }
+                }
+            }
+            
+            let operstate_path = path.join("operstate");
+            if let Ok(state) = std::fs::read_to_string(&operstate_path) {
+                let state = state.trim();
+                let status_row = adw::ActionRow::builder()
+                    .title("Status")
+                    .subtitle(state)
+                    .build();
+                group.add(&status_row);
+            }
+        }
+    }
+    
+    if !wifi_found {
+        let no_wifi_row = adw::ActionRow::builder()
+            .title("No WiFi interface detected")
+            .build();
+        group.add(&no_wifi_row);
+    }
+    
+    group
+}
+
+fn extract_pci_ids(modalias: &str) -> Option<(String, String)> {
+    let parts: Vec<&str> = modalias.split('d').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    
+    let vendor = parts[0].trim_start_matches("pci:v");
+    let device = parts[1].split('s').next()?;
+    
+    Some((vendor.to_string(), device.to_string()))
+}
+
+fn get_wifi_chip_name(vendor_device: &(String, String)) -> String {
+    let (vendor, device) = vendor_device;
+    
+    match vendor.as_str() {
+        "00008086" => {
+            match device.as_str() {
+                "00002723" => "Intel Wi-Fi 6 AX200".to_string(),
+                "000024FD" => "Intel Wi-Fi 6 AX210".to_string(),
+                "00002725" => "Intel Wi-Fi 6E AX211".to_string(),
+                "000051F0" => "Intel Wi-Fi 6E AX211".to_string(),
+                "00007AF0" => "Intel Wi-Fi 7 BE200".to_string(),
+                _ => format!("Intel WiFi ({}:{})", vendor, device),
+            }
+        }
+        "000010EC" => {
+            match device.as_str() {
+                "0000C821" => "Realtek RTL8821CE".to_string(),
+                "0000C822" => "Realtek RTL8822CE".to_string(),
+                "0000B822" => "Realtek RTL8822BE".to_string(),
+                _ => format!("Realtek WiFi ({}:{})", vendor, device),
+            }
+        }
+        "000014E4" => format!("Broadcom WiFi ({}:{})", vendor, device),
+        "0000168C" => format!("Qualcomm Atheros WiFi ({}:{})", vendor, device),
+        _ => format!("Unknown WiFi ({}:{})", vendor, device),
+    }
+}
+
+fn create_storage_section() -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Storage")
+        .build();
+    
+    if let Ok(entries) = std::fs::read_dir("/sys/block") {
+        for entry in entries.flatten() {
+            let dev_name = entry.file_name().to_string_lossy().to_string();
+            
+            if dev_name.starts_with("loop") || dev_name.starts_with("ram") {
+                continue;
+            }
+            
+            let path = entry.path();
+            if let Ok(model) = std::fs::read_to_string(path.join("device/model")) {
+                let model = model.trim();
+                if let Ok(size_str) = std::fs::read_to_string(path.join("size")) {
+                    if let Ok(size_sectors) = size_str.trim().parse::<u64>() {
+                        let size_gb = (size_sectors * 512) / 1_000_000_000;
+                        let device_row = adw::ActionRow::builder()
+                            .title(&format!("{} - {} GB", model, size_gb))
+                            .subtitle(&format!("/dev/{}", dev_name))
+                            .build();
+                        group.add(&device_row);
+                    }
+                }
             }
         }
     }
@@ -78,162 +653,73 @@ fn create_system_info_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> a
     group
 }
 
-fn create_cpu_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> adw::PreferencesGroup {
+fn create_fans_section() -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
-        .title("CPU")
+        .title("Fans")
         .build();
     
-    // CPU Name
-    let name_row = adw::ActionRow::builder()
-        .title("Processor")
-        .subtitle("Loading...")
-        .build();
-    group.add(&name_row);
+    let mut refs = Vec::new();
+    for i in 0..4 {
+        let fan_row = adw::ActionRow::builder()
+            .title(&format!("Fan {}", i))
+            .subtitle("Not detected")
+            .visible(false)
+            .build();
+        group.add(&fan_row);
+        refs.push((format!("fan{}", i), fan_row));
+    }
     
-    // Median Frequency
-    let freq_row = adw::ActionRow::builder()
-        .title("Median Frequency")
-        .subtitle("Loading...")
-        .build();
-    group.add(&freq_row);
+    (group, refs)
+}
+
+fn update_fans_info(refs: &WidgetRefs) {
+    let mut fans_found = false;
     
-    // Package Temperature
-    let temp_row = adw::ActionRow::builder()
-        .title("Package Temperature")
-        .subtitle("Loading...")
-        .build();
-    group.add(&temp_row);
-    
-    // Package Power
-    let power_row = adw::ActionRow::builder()
-        .title("Package Power")
-        .subtitle("Loading...")
-        .build();
-    group.add(&power_row);
-    
-    // Power Sources
-    let power_sources_expander = adw::ExpanderRow::builder()
-        .title("Power Sources")
-        .subtitle("Available power monitoring sources")
-        .build();
-    group.add(&power_sources_expander);
-    
-    // CPU Governor
-    let governor_row = adw::ComboRow::builder()
-        .title("CPU Governor")
-        .build();
-    let governor_model = gtk::StringList::new(&["Loading..."]);
-    governor_row.set_model(Some(&governor_model));
-    group.add(&governor_row);
-    
-    // AMD pstate
-    let pstate_row = adw::ComboRow::builder()
-        .title("AMD pstate Status")
-        .build();
-    let pstate_model = gtk::StringList::new(&["passive", "active", "guided"]);
-    pstate_row.set_model(Some(&pstate_model));
-    pstate_row.set_visible(false);
-    group.add(&pstate_row);
-    
-    // Boost Toggle
-    let boost_row = adw::ActionRow::builder()
-        .title("CPU Boost")
-        .subtitle("Turbo / Precision Boost")
-        .build();
-    let boost_switch = Switch::new();
-    boost_switch.set_valign(gtk::Align::Center);
-    boost_row.add_suffix(&boost_switch);
-    boost_row.set_activatable_widget(Some(&boost_switch));
-    group.add(&boost_row);
-    
-    // SMT Toggle
-    let smt_row = adw::ActionRow::builder()
-        .title("SMT / Hyperthreading")
-        .subtitle("Simultaneous Multithreading")
-        .build();
-    let smt_switch = Switch::new();
-    smt_switch.set_valign(gtk::Align::Center);
-    smt_row.add_suffix(&smt_switch);
-    smt_row.set_activatable_widget(Some(&smt_switch));
-    group.add(&smt_row);
-    
-    // Per-core details
-    let expander = adw::ExpanderRow::builder()
-        .title("Show per-core details")
-        .build();
-    group.add(&expander);
-    
-    // Load CPU info - blocking call is fine here, it's fast (< 50ms)
-    if let Some(client) = dbus_client.borrow().as_ref() {
-        match client.get_cpu_info() {
-            Ok(info) => {
-                name_row.set_subtitle(&info.name);
-                freq_row.set_subtitle(&format!("{} MHz", info.median_frequency / 1000));
-                temp_row.set_subtitle(&format!("{:.1}°C", info.package_temp));
-                
-                // Power
-                if let Some(pwr) = info.package_power {
-                    if let Some(ref src) = info.power_source {
-                        power_row.set_subtitle(&format!("{:.1} W ({})", pwr, src));
-                    } else {
-                        power_row.set_subtitle(&format!("{:.1} W", pwr));
+    for (key, row) in refs {
+        if let Some(fan_id) = key.strip_prefix("fan") {
+            if let Ok(id) = fan_id.parse::<u32>() {
+                let fan_path = format!("/sys/devices/platform/tuxedo_io/fan{}_input", id);
+                if let Ok(speed) = std::fs::read_to_string(&fan_path) {
+                    if let Ok(rpm) = speed.trim().parse::<u32>() {
+                        if rpm > 0 {
+                            row.set_subtitle(&format!("{} RPM", rpm));
+                            row.set_visible(true);
+                            fans_found = true;
+                            continue;
+                        }
                     }
                 }
-                
-                // Power sources
-                for source in &info.all_power_sources {
-                    let source_row = adw::ActionRow::builder()
-                        .title(&source.name)
-                        .subtitle(&format!("{:.1} W - {}", source.value, source.description))
-                        .build();
-                    power_sources_expander.add_row(&source_row);
-                }
-                
-                if info.all_power_sources.is_empty() {
-                    power_sources_expander.set_visible(false);
-                }
-                
-                // Governors
-                let gov_strs: Vec<&str> = info.available_governors.iter().map(|s| s.as_str()).collect();
-                let new_model = gtk::StringList::new(&gov_strs);
-                governor_row.set_model(Some(&new_model));
-                
-                if let Some(idx) = info.available_governors.iter().position(|g| g == &info.governor) {
-                    governor_row.set_selected(idx as u32);
-                }
-                
-                // AMD pstate
-                if let Some(ref status) = info.amd_pstate_status {
-                    pstate_row.set_visible(true);
-                    let statuses = vec!["passive", "active", "guided"];
-                    let status_str = status.as_str();
-                    if let Some(idx) = statuses.iter().position(|s| *s == status_str) {
-                        pstate_row.set_selected(idx as u32);
-                    }
-                }
-                
-                // Switches
-                boost_switch.set_active(info.boost_enabled);
-                smt_switch.set_active(info.smt_enabled);
-                
-                // Core details
-                for core in &info.cores {
-                    let core_row = adw::ActionRow::builder()
-                        .title(&format!("Core {}", core.id))
-                        .subtitle(&format!("{} MHz, {:.1}°C", core.frequency / 1000, core.temperature))
-                        .build();
-                    expander.add_row(&core_row);
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to get CPU info: {}", e);
-                name_row.set_subtitle("Error loading");
-                freq_row.set_subtitle("Error");
-                temp_row.set_subtitle("Error");
-                power_row.set_subtitle("Error");
             }
         }
     }
     
-    group
+    if !fans_found {
+        if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
+            let mut fan_idx = 0;
+            for entry in entries.flatten() {
+                for i in 1..10 {
+                    let fan_input = format!("fan{}_input", i);
+                    let fan_path = entry.path().join(&fan_input);
+                    
+                    if let Ok(speed) = std::fs::read_to_string(&fan_path) {
+                        if let Ok(rpm) = speed.trim().parse::<u32>() {
+                            if rpm > 0 && fan_idx < refs.len() {
+                                let (_, row) = &refs[fan_idx];
+                                row.set_subtitle(&format!("{} RPM", rpm));
+                                row.set_visible(true);
+                                fan_idx += 1;
+                                fans_found = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    if !fans_found {
+        for (_, row) in refs {
+            row.set_visible(false);
+        }
+    }
 }
