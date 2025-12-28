@@ -2,7 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ "new_variant" ]
+    branches:
+      - main
+      - new_variant
   pull_request:
     branches: [ "main" ]
 
