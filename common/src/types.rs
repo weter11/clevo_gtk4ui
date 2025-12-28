@@ -134,6 +134,8 @@ pub struct CpuSettings {
     pub boost: Option<bool>,
     pub smt: Option<bool>,
     pub performance_profile: Option<String>,
+    pub tdp_profile: Option<String>,              // ADD
+    pub energy_performance_preference: Option<String>,  // ADD
     pub tdp: Option<u32>,
     pub amd_pstate_status: Option<String>,
 }
