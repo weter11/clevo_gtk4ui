@@ -12,7 +12,7 @@ pub fn get_system_info() -> Result<SystemInfo> {
 }
 
 fn read_dmi(file: &str) -> Result<String> {
-    let path = format!("id/{}", file);
+    let path = format!("/sys/devices/virtual/dmi/id/{}", file);
     fs::read_to_string(&path)
         .map(|s| s.trim().to_string())
         .map_err(|e| anyhow!("Failed to read {}: {}", path, e))
@@ -59,10 +59,8 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
     let (min_freq, max_freq) = read_frequency_limits();
     let (hw_min_freq, hw_max_freq) = read_hw_frequency_limits()?;
     
-    // Get available controls for current pstate mode
     let available_pstate_controls = get_available_pstate_controls(&amd_pstate_status);
     
-    // Get EPP info
     let energy_performance_preference = read_epp_preference().ok();
     let available_epp_preferences = read_available_epp_preferences().unwrap_or_default();
     
@@ -92,6 +90,217 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
         energy_performance_preference,
         available_epp_preferences,
     })
+}
+
+// Helper functions for CPU info
+
+fn get_cpu_count() -> Result<u32> {
+    let mut count = 0;
+    for i in 0..1024 {
+        let path = format!("/sys/devices/system/cpu/cpu{}", i);
+        if !Path::new(&path).exists() {
+            break;
+        }
+        count += 1;
+    }
+    if count == 0 {
+        return Err(anyhow!("No CPUs found"));
+    }
+    Ok(count)
+}
+
+fn get_cpu_name() -> Result<String> {
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
+    for line in cpuinfo.lines() {
+        if line.starts_with("model name") {
+            if let Some(name) = line.split(':').nth(1) {
+                return Ok(name.trim().to_string());
+            }
+        }
+    }
+    Err(anyhow!("CPU name not found"))
+}
+
+fn read_cpu_frequency(cpu_id: u32) -> Result<u64> {
+    let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", cpu_id);
+    fs::read_to_string(&path)?
+        .trim()
+        .parse()
+        .map_err(|e| anyhow!("Failed to parse frequency: {}", e))
+}
+
+fn read_cpu_load(cpu_id: u32) -> Result<f32> {
+    // Read from /proc/stat
+    let stat = fs::read_to_string("/proc/stat")?;
+    let cpu_line = format!("cpu{} ", cpu_id);
+    
+    for line in stat.lines() {
+        if line.starts_with(&cpu_line) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 5 {
+                let user: u64 = parts[1].parse().unwrap_or(0);
+                let nice: u64 = parts[2].parse().unwrap_or(0);
+                let system: u64 = parts[3].parse().unwrap_or(0);
+                let idle: u64 = parts[4].parse().unwrap_or(0);
+                
+                let total = user + nice + system + idle;
+                let active = user + nice + system;
+                
+                if total > 0 {
+                    return Ok((active as f32 / total as f32) * 100.0);
+                }
+            }
+        }
+    }
+    Ok(0.0)
+}
+
+fn calculate_median(values: &[u64]) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
+}
+
+fn get_package_temp_k10temp() -> Result<f32> {
+    for entry in fs::read_dir("/sys/class/hwmon")? {
+        let entry = entry?;
+        let name_path = entry.path().join("name");
+        if let Ok(name) = fs::read_to_string(&name_path) {
+            let name = name.trim();
+            if name == "coretemp" || name == "k10temp" {
+                let temp_path = entry.path().join("temp1_input");
+                if let Ok(temp_str) = fs::read_to_string(&temp_path) {
+                    if let Ok(temp) = temp_str.trim().parse::<f32>() {
+                        return Ok(temp / 1000.0);
+                    }
+                }
+            }
+        }
+    }
+    Err(anyhow!("Package temperature not found"))
+}
+
+fn get_all_power_sources() -> Vec<PowerSource> {
+    let mut sources = Vec::new();
+    
+    // Try RAPL
+    if let Ok(entries) = fs::read_dir("/sys/class/powercap") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.join("name").exists() {
+                if let Ok(name) = fs::read_to_string(path.join("name")) {
+                    if name.trim().contains("package") {
+                        if let Ok(energy) = fs::read_to_string(path.join("energy_uj")) {
+                            if let Ok(energy_val) = energy.trim().parse::<f32>() {
+                                sources.push(PowerSource {
+                                    name: "RAPL".to_string(),
+                                    value: energy_val / 1_000_000.0, // Convert to watts
+                                    description: "Intel RAPL".to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Try AMD GPU power
+    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let power_path = entry.path().join("device/hwmon").join("hwmon0/power1_average");
+            if power_path.exists() {
+                if let Ok(power_str) = fs::read_to_string(&power_path) {
+                    if let Ok(power_val) = power_str.trim().parse::<f32>() {
+                        sources.push(PowerSource {
+                            name: "amdgpu".to_string(),
+                            value: power_val / 1_000_000.0,
+                            description: "AMD GPU Power".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    sources
+}
+
+fn read_governor() -> Result<String> {
+    fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+        .map(|s| s.trim().to_string())
+        .map_err(|e| anyhow!("Failed to read governor: {}", e))
+}
+
+fn read_available_governors() -> Result<Vec<String>> {
+    let governors = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")?;
+    Ok(governors.split_whitespace().map(String::from).collect())
+}
+
+fn is_boost_enabled() -> Result<bool> {
+    // Try AMD
+    let amd_path = "/sys/devices/system/cpu/cpufreq/boost";
+    if Path::new(amd_path).exists() {
+        let val = fs::read_to_string(amd_path)?.trim().to_string();
+        return Ok(val == "1");
+    }
+    
+    // Try Intel (inverted)
+    let intel_path = "/sys/devices/system/cpu/intel_pstate/no_turbo";
+    if Path::new(intel_path).exists() {
+        let val = fs::read_to_string(intel_path)?.trim().to_string();
+        return Ok(val == "0");
+    }
+    
+    Err(anyhow!("Boost control not available"))
+}
+
+fn is_smt_enabled() -> Result<bool> {
+    let path = "/sys/devices/system/cpu/smt/active";
+    if Path::new(path).exists() {
+        let val = fs::read_to_string(path)?.trim().to_string();
+        return Ok(val == "1");
+    }
+    Err(anyhow!("SMT control not available"))
+}
+
+fn read_scaling_driver() -> Result<String> {
+    fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver")
+        .map(|s| s.trim().to_string())
+        .map_err(|e| anyhow!("Failed to read scaling driver: {}", e))
+}
+
+fn read_amd_pstate_status() -> Result<String> {
+    fs::read_to_string("/sys/devices/system/cpu/amd_pstate/status")
+        .map(|s| s.trim().to_string())
+        .map_err(|e| anyhow!("Failed to read AMD pstate status: {}", e))
+}
+
+fn read_frequency_limits() -> (Option<u64>, Option<u64>) {
+    let min = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq")
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    
+    let max = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
+        .ok()
+        .and_then(|s| s.trim().parse().ok());
+    
+    (min, max)
+}
+
+fn read_hw_frequency_limits() -> Result<(u64, u64)> {
+    let min = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")?
+        .trim()
+        .parse()?;
+    
+    let max = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")?
+        .trim()
+        .parse()?;
+    
+    Ok((min, max))
 }
 
 fn get_available_pstate_controls(pstate_status: &Option<String>) -> Vec<String> {
@@ -154,17 +363,14 @@ pub fn get_battery_info() -> Result<BatteryInfo> {
         _ => BatteryStatus::Unknown,
     };
     
-    // Detect if on AC power
     let on_ac_power = is_on_ac_power();
     
-    // Calculate power draw only if on battery
     let power_draw_w = if on_ac_power {
         None
     } else {
         Some((voltage_mv as f32 * current_ma.abs() as f32) / 1_000_000_000_000.0)
     };
     
-    // Try to read charge thresholds
     let charge_start_threshold = read_battery_value(&battery_path, "charge_control_start_threshold")
         .ok()
         .map(|v| v as u8);
@@ -229,8 +435,8 @@ fn is_on_ac_power() -> bool {
             }
         }
         
-        let path_alt = format!("/sys/class/power_supply/ACAD/online");
-        if let Ok(online) = fs::read_to_string(&path_alt) {
+        let path_alt = "/sys/class/power_supply/ACAD/online";
+        if let Ok(online) = fs::read_to_string(path_alt) {
             if online.trim() == "1" {
                 return true;
             }
@@ -247,7 +453,6 @@ pub fn get_wifi_info() -> Result<Vec<WiFiInfo>> {
         let entry = entry?;
         let iface_name = entry.file_name().to_string_lossy().to_string();
         
-        // Check if it's a wireless interface
         let wireless_path = entry.path().join("wireless");
         if !wireless_path.exists() {
             continue;
@@ -256,16 +461,9 @@ pub fn get_wifi_info() -> Result<Vec<WiFiInfo>> {
         let driver = read_device_driver(&entry.path()).unwrap_or_else(|_| "Unknown".to_string());
         let chip_model = read_wifi_chip_model(&entry.path()).unwrap_or_else(|_| "Unknown".to_string());
         
-        // Get link speed
         let link_speed_mbps = read_wifi_link_speed(&iface_name).ok();
-        
-        // Get signal strength
         let signal_strength = read_wifi_signal(&iface_name).ok();
-        
-        // Get SSID
         let ssid = read_wifi_ssid(&iface_name).ok();
-        
-        // Try to get temperature
         let temperature = read_wifi_temperature(&driver).ok();
         
         wifi_interfaces.push(WiFiInfo {
@@ -293,13 +491,11 @@ fn read_device_driver(device_path: &Path) -> Result<String> {
 }
 
 fn read_wifi_chip_model(device_path: &Path) -> Result<String> {
-    // Try to read from modalias
     let modalias_path = device_path.join("device/modalias");
     if let Ok(modalias) = fs::read_to_string(&modalias_path) {
         return Ok(modalias.trim().to_string());
     }
     
-    // Try to read PCI device info
     let vendor_path = device_path.join("device/vendor");
     let device_id_path = device_path.join("device/device");
     
@@ -314,7 +510,6 @@ fn read_wifi_chip_model(device_path: &Path) -> Result<String> {
 }
 
 fn read_wifi_link_speed(iface: &str) -> Result<u32> {
-    // Use iw command if available
     let output = std::process::Command::new("iw")
         .args(&["dev", iface, "link"])
         .output()?;
@@ -370,7 +565,6 @@ fn read_wifi_ssid(iface: &str) -> Result<String> {
 }
 
 fn read_wifi_temperature(driver: &str) -> Result<f32> {
-    // Check hwmon for WiFi chip temperature
     for entry in fs::read_dir("/sys/class/hwmon")? {
         let entry = entry?;
         let name_path = entry.path().join("name");
@@ -388,7 +582,7 @@ fn read_wifi_temperature(driver: &str) -> Result<f32> {
     Err(anyhow!("Temperature not available"))
 }
 
-// Enhanced GPU detection with status
+// GPU detection
 pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
     let mut gpus = Vec::new();
     
@@ -413,7 +607,6 @@ fn detect_gpu_enhanced(path: &str, id: u32) -> Result<GpuInfo> {
         GpuType::Discrete
     };
     
-    // Read runtime status
     let status_path = format!("{}/power/runtime_status", device_path);
     let status = if let Ok(status_str) = fs::read_to_string(&status_path) {
         match status_str.trim() {
@@ -425,10 +618,8 @@ fn detect_gpu_enhanced(path: &str, id: u32) -> Result<GpuInfo> {
         GpuStatus::Unknown
     };
     
-    // Read driver
     let driver = read_device_driver(&Path::new(path)).ok();
     
-    // Read PCI ID
     let vendor_path = format!("{}/vendor", device_path);
     let device_id_path = format!("{}/device", device_path);
     let pci_id = if let (Ok(vendor), Ok(device)) = (
@@ -463,12 +654,10 @@ fn detect_gpu_enhanced(path: &str, id: u32) -> Result<GpuInfo> {
 pub fn get_fan_info() -> Result<Vec<FanInfo>> {
     let mut fans = Vec::new();
     
-    // Try tuxedo_io interface first
     if Path::new("/sys/devices/platform/tuxedo_io").exists() {
         fans = get_tuxedo_fans()?;
     }
     
-    // Fallback to hwmon
     if fans.is_empty() {
         fans = get_hwmon_fans()?;
     }
@@ -502,7 +691,7 @@ fn get_tuxedo_fans() -> Result<Vec<FanInfo>> {
             name: format!("Fan {}", i),
             rpm,
             duty_percent,
-            temperature: None, // Could add temperature sensor association
+            temperature: None,
         });
     }
     
@@ -530,7 +719,7 @@ fn get_hwmon_fans() -> Result<Vec<FanInfo>> {
                 id: fan_id,
                 name: format!("Fan {}", fan_id),
                 rpm,
-                duty_percent: 0, // Not available via hwmon
+                duty_percent: 0,
                 temperature: None,
             });
             
@@ -539,4 +728,33 @@ fn get_hwmon_fans() -> Result<Vec<FanInfo>> {
     }
     
     Ok(fans)
+}
+
+// Storage info (placeholder)
+pub fn get_storage_info() -> Result<Vec<StorageInfo>> {
+    let mut storage_devices = Vec::new();
+    
+    // Basic implementation - would need to be expanded
+    for entry in fs::read_dir("/sys/block")? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        
+        if name.starts_with("sd") || name.starts_with("nvme") {
+            let size_path = entry.path().join("size");
+            if let Ok(size_str) = fs::read_to_string(&size_path) {
+                if let Ok(size_blocks) = size_str.trim().parse::<u64>() {
+                    let size_gb = (size_blocks * 512) / (1024 * 1024 * 1024);
+                    
+                    storage_devices.push(StorageInfo {
+                        device: format!("/dev/{}", name),
+                        model: "Unknown".to_string(),
+                        size_gb,
+                        temperature: None,
+                    });
+                }
+            }
+        }
+    }
+    
+    Ok(storage_devices)
 }
