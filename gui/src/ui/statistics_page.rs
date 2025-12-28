@@ -262,7 +262,7 @@ fn update_battery_info(
                 
                 // Status with time estimate
                 let status_text = match info.status {
-                    tuxedo_common::types::BatteryStatus::Charging => "⚡ Charging",
+                    tuxedo_common::types::BatteryStatus::Charging => "⚡ Charging".to_string(),
                     tuxedo_common::types::BatteryStatus::Discharging => {
                         if let Some(draw) = info.power_draw_w {
                             if draw > 0.0 {
@@ -276,9 +276,9 @@ fn update_battery_info(
                             "🔋 Discharging".to_string()
                         }
                     }
-                    tuxedo_common::types::BatteryStatus::Full => "✓ Full",
-                    tuxedo_common::types::BatteryStatus::NotCharging => "⏸ Not Charging",
-                    tuxedo_common::types::BatteryStatus::Unknown => "❓ Unknown",
+                    tuxedo_common::types::BatteryStatus::Full => "✓ Full".to_string(),
+                    tuxedo_common::types::BatteryStatus::NotCharging => "⏸ Not Charging".to_string(),
+                    tuxedo_common::types::BatteryStatus::Unknown => "❓ Unknown".to_string(),
                 };
                 status_row.set_subtitle(&status_text);
                 
@@ -546,14 +546,13 @@ fn setup_fans_realtime_updates(
 fn find_row_by_title(group: &adw::PreferencesGroup, title: &str) -> Option<adw::ActionRow> {
     let mut child = group.first_child();
     while let Some(widget) = child {
+        let next = widget.next_sibling();
         if let Ok(row) = widget.downcast::<adw::ActionRow>() {
             if row.title() == title {
                 return Some(row);
             }
-            child = row.next_sibling();
-        } else {
-            child = widget.next_sibling();
+        } 
+        child = next;
         }
-    }
     None
 }
