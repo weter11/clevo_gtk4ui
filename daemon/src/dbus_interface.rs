@@ -65,6 +65,31 @@ impl ControlInterface {
         crate::hardware_control::apply_profile(&profile)
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
+
+    async fn get_tdp_profiles(&self) -> Result<String, zbus::fdo::Error> {
+    match crate::hardware_detection::get_tdp_profiles() {
+        Ok(profiles) => serde_json::to_string(&profiles)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+        Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+    }
+}
+
+    async fn get_current_tdp_profile(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_current_tdp_profile() {
+            Ok(profile) => Ok(profile),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
+async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
+    crate::hardware_control::set_tdp_profile(profile)
+        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+}
+
+async fn set_energy_performance_preference(&self, epp: &str) -> Result<(), zbus::fdo::Error> {
+    crate::hardware_control::set_energy_performance_preference(epp)
+        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+}
 }
 
 pub async fn start_service(_connection: Connection) -> Result<()> {
