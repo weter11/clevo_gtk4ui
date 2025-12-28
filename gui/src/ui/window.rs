@@ -31,6 +31,8 @@ impl TuxedoWindow {
         
         // Create view stack and switcher
         let view_stack = adw::ViewStack::new();
+             view_stack.set_vexpand(true);
+             view_stack.set_hexpand(true);
         let view_switcher = adw::ViewSwitcher::builder()
             .stack(&view_stack)
             .policy(adw::ViewSwitcherPolicy::Wide)
@@ -40,7 +42,8 @@ impl TuxedoWindow {
         
         // Create pages
         let statistics = statistics_page::create_page(config.clone(), dbus_client.clone());
-        let profiles = profiles_page::create_page(config.clone(), dbus_client.clone());
+        let gtk_window = window.clone().upcast::<gtk::Window>();
+        let profiles = profiles_page::create_page(config.clone(), dbus_client.clone(), gtk_window.clone());
         let tuning = tuning_page::create_page(config.clone(), dbus_client.clone());
         let settings = settings_page::create_page(config.clone());
         
