@@ -717,6 +717,11 @@ pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
                 name,
                 gpu_type,
                 status,
+                frequency: None,      // ADD
+                temperature: None,    // ADD
+                load: None,           // ADD
+                power: None,          // ADD
+                voltage: None,        // ADD
             });
         }
     }
