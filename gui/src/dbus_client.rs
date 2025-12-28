@@ -133,4 +133,55 @@ impl DbusClient {
         proxy.call::<_, _, ()>("ApplyProfile", &(json.as_str(),))?;
         Ok(())
     }
+
+    pub fn get_tdp_profiles(&self) -> Result<Vec<String>> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    let json: String = proxy.call("GetTdpProfiles", &())?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+pub fn get_current_tdp_profile(&self) -> Result<String> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    Ok(proxy.call("GetCurrentTdpProfile", &())?)
+}
+
+pub fn set_tdp_profile(&self, profile: &str) -> Result<()> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    proxy.call::<_, _, ()>("SetTdpProfile", &(profile,))?;
+    Ok(())
+}
+
+pub fn set_energy_performance_preference(&self, epp: &str) -> Result<()> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    proxy.call::<_, _, ()>("SetEnergyPerformancePreference", &(epp,))?;
+    Ok(())
+}
 }
