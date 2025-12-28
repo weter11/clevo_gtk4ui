@@ -27,6 +27,24 @@ pub struct CpuInfo {
     pub max_freq: Option<u64>,
     pub hw_min_freq: u64,
     pub hw_max_freq: u64,
+    pub energy_performance_preference: Option<String>,  // ADD
+    pub available_epp_options: Vec<String>,             // ADD
+    pub capabilities: CpuCapabilities,                   // ADD
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuCapabilities {
+    pub has_boost: bool,
+    pub has_cpuinfo_max_freq: bool,
+    pub has_cpuinfo_min_freq: bool,
+    pub has_scaling_driver: bool,
+    pub has_energy_performance_preference: bool,
+    pub has_scaling_governor: bool,
+    pub has_smt: bool,
+    pub has_scaling_min_freq: bool,
+    pub has_scaling_max_freq: bool,
+    pub has_available_governors: bool,
+    pub has_amd_pstate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +284,8 @@ impl Default for CpuSettings {
             performance_profile: None,
             tdp: None,
             amd_pstate_status: None,
+            tdp_profile: None,                          // ADD
+            energy_performance_preference: None,        // ADD
         }
     }
 }
