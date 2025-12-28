@@ -97,8 +97,16 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
         set_cpu_governor(governor)?;
     }
     
+    if let Some(ref tdp_profile) = profile.cpu_settings.tdp_profile {
+        set_tdp_profile(tdp_profile)?;
+    }
+    
     if let Some(ref amd_status) = profile.cpu_settings.amd_pstate_status {
         set_amd_pstate_status(amd_status)?;
+    }
+    
+    if let Some(ref epp) = profile.cpu_settings.energy_performance_preference {
+        set_energy_performance_preference(epp)?;
     }
     
     if let (Some(min), Some(max)) = (profile.cpu_settings.min_frequency, profile.cpu_settings.max_frequency) {
@@ -128,35 +136,49 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
 
 fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     if !settings.control_enabled {
+        log::info!("Keyboard control disabled, skipping");
         return Ok(());
     }
     
+    let base_path = find_keyboard_backlight_path()
+        .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
+    
     match &settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
-            let color_path = "/sys/class/leds/rgb:kbd_backlight/multi_intensity";
-            let brightness_path = "/sys/class/leds/rgb:kbd_backlight/brightness";
+            log::info!("Applying keyboard: RGB({}, {}, {}) brightness {}%", r, g, b, brightness);
             
-            if Path::new(color_path).exists() {
-                fs::write(color_path, format!("{} {} {}", r, g, b))?;
+            let color_path = format!("{}/multi_intensity", base_path);
+            if Path::new(&color_path).exists() {
+                let color_str = format!("{} {} {}", r, g, b);
+                log::info!("Writing to {}: {}", color_path, color_str);
+                fs::write(&color_path, color_str)?;
+            } else {
+                log::warn!("multi_intensity not found at {}", color_path);
             }
             
-            if Path::new(brightness_path).exists() {
-                // Read max brightness
-                let max_brightness_path = "/sys/class/leds/rgb:kbd_backlight/max_brightness";
-                let max_brightness: u32 = fs::read_to_string(max_brightness_path)?
-                    .trim()
-                    .parse()
-                    .unwrap_or(255);
+            let brightness_path = format!("{}/brightness", base_path);
+            if Path::new(&brightness_path).exists() {
+                let max_brightness_path = format!("{}/max_brightness", base_path);
+                let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+                    max_str.trim().parse().unwrap_or(255)
+                } else {
+                    255
+                };
                 
                 let actual_brightness = ((*brightness as u32) * max_brightness) / 100;
-                fs::write(brightness_path, actual_brightness.to_string())?;
+                
+                log::info!("Writing to {}: {} ({}% of {} max)", 
+                    brightness_path, actual_brightness, brightness, max_brightness);
+                
+                fs::write(&brightness_path, actual_brightness.to_string())?;
+            } else {
+                log::warn!("brightness not found at {}", brightness_path);
             }
             
-            log::info!("Set keyboard: RGB({}, {}, {}), brightness {}%", r, g, b, brightness);
+            log::info!("✅ Keyboard backlight applied successfully");
         }
         KeyboardMode::Effect { effect, speed } => {
             log::info!("Keyboard effect mode not yet implemented: {} at speed {}", effect, speed);
-            // TODO: Implement tuxedo_keyboard driver effect modes
         }
     }
     
@@ -239,6 +261,70 @@ fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
         log::info!("Applied fan curve for fan {}", curve.fan_id);
     }
     
+    Ok(())
+}
+
+fn get_cpu_count() -> Result<u32> {
+    let mut count = 0;
+    for i in 0..1024 {
+        let path = format!("/sys/devices/system/cpu/cpu{}", i);
+        if !Path::new(&path).exists() {
+            break;
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn find_keyboard_backlight_path() -> Option<String> {
+    let possible_paths = vec![
+        "/sys/class/leds/rgb:kbd_backlight",
+        "/sys/class/leds/tuxedo::kbd_backlight",
+        "/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight",
+        "/sys/class/leds/asus::kbd_backlight",
+    ];
+    
+    for path in possible_paths {
+        let brightness_path = format!("{}/brightness", path);
+        if Path::new(&brightness_path).exists() {
+            log::info!("Found keyboard backlight at: {}", path);
+            return Some(path.to_string());
+        }
+    }
+    
+    log::warn!("No keyboard backlight found");
+    None
+}
+
+pub fn set_tdp_profile(profile: &str) -> Result<()> {
+    let path = "/sys/devices/platform/tuxedo_io/performance_profile";
+    if !Path::new(path).exists() {
+        return Err(anyhow!("TDP profiles not available"));
+    }
+    
+    fs::write(path, profile)?;
+    log::info!("Set TDP profile to: {}", profile);
+    Ok(())
+}
+
+pub fn set_energy_performance_preference(epp: &str) -> Result<()> {
+    let cpu_count = get_cpu_count()?;
+    
+    let valid_values = ["performance", "balance_performance", "balance_power", "power", 
+                       "default", "balance-performance", "balance-power"];
+    if !valid_values.contains(&epp) {
+        return Err(anyhow!("Invalid EPP value: {}", epp));
+    }
+    
+    for i in 0..cpu_count {
+        let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/energy_performance_preference", i);
+        if Path::new(&path).exists() {
+            fs::write(&path, epp)
+                .map_err(|e| anyhow!("Failed to set EPP for CPU {}: {}", i, e))?;
+        }
+    }
+    
+    log::info!("Set energy performance preference to: {}", epp);
     Ok(())
 }
 
