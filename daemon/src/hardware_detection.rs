@@ -1,92 +1,83 @@
 use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
+
 use tuxedo_common::types::*;
 
-pub fn get_system_info() -> Result<SystemInfo> {
-    Ok(SystemInfo {
-        product_name: read_dmi("product_name")?,
-        manufacturer: read_dmi("sys_vendor")?,
-        bios_version: read_dmi("bios_version")?,
-    })
+#[derive(Debug, Clone)]
+struct CpuStats {
+    user: u64,
+    nice: u64,
+    system: u64,
+    idle: u64,
+    iowait: u64,
+    irq: u64,
+    softirq: u64,
 }
 
-fn read_dmi(file: &str) -> Result<String> {
-    let path = format!("/sys/class/dmi/id/{}", file);
-    fs::read_to_string(&path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| anyhow!("Failed to read {}: {}", path, e))
-}
-
-pub fn get_cpu_info() -> Result<CpuInfo> {
-    let name = get_cpu_name()?;
-    let core_count = get_cpu_count()?;
-    
-    let mut cores = Vec::new();
-    let mut frequencies = Vec::new();
-    
-    for i in 0..core_count {
-        let freq = read_cpu_frequency(i)?;
-        frequencies.push(freq);
-        cores.push(CoreInfo {
-            id: i,
-            frequency: freq,
-            load: 0.0, // TODO: Implement load calculation
-            temperature: get_core_temp(i).unwrap_or(0.0),
-        });
+impl CpuStats {
+    fn total(&self) -> u64 {
+        self.user + self.nice + self.system + self.idle + self.iowait + self.irq + self.softirq
     }
     
-    let median_frequency = calculate_median(&frequencies);
-    let package_temp = get_package_temp().unwrap_or(0.0);
-    let package_power = get_cpu_power();
-    
-    let governor = read_governor()?;
-    let available_governors = read_available_governors()?;
-    
-    let boost_enabled = is_boost_enabled()?;
-    let smt_enabled = is_smt_enabled()?;
-    
-    let scaling_driver = read_scaling_driver()?;
-    let amd_pstate_status = read_amd_pstate_status().ok();
-    
-    let (min_freq, max_freq) = read_frequency_limits();
-    let (hw_min_freq, hw_max_freq) = read_hw_frequency_limits()?;
+    fn work(&self) -> u64 {
+        self.user + self.nice + self.system + self.irq + self.softirq
+    }
+}
 
-    // Get all power sources
-    let all_power_sources = get_all_power_sources();
+fn read_cpu_stats() -> Result<HashMap<u32, CpuStats>> {
+    let stat = fs::read_to_string("/proc/stat")?;
+    let mut stats = HashMap::new();
     
-    // Choose the primary power source (you can adjust this based on your logic)
-    let power_source = all_power_sources.iter().find(|s| s.name == "RAPL")
-    .cloned()  // .cloned() to clone the `PowerSource` from the reference
-    .unwrap_or_else(|| PowerSource {
-        name: "Unknown".to_string(),
-        value: 0.0,
-        description: "No valid power source found".to_string(),
-    });
+    for line in stat.lines() {
+        if line.starts_with("cpu") && !line.starts_with("cpu ") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 8 {
+                continue;
+            }
+            
+            let cpu_id: u32 = parts[0].trim_start_matches("cpu").parse()?;
+            let user: u64 = parts[1].parse()?;
+            let nice: u64 = parts[2].parse()?;
+            let system: u64 = parts[3].parse()?;
+            let idle: u64 = parts[4].parse()?;
+            let iowait: u64 = parts[5].parse()?;
+            let irq: u64 = parts[6].parse()?;
+            let softirq: u64 = parts[7].parse()?;
+            
+            stats.insert(cpu_id, CpuStats {
+                user, nice, system, idle, iowait, irq, softirq,
+            });
+        }
+    }
+    
+    Ok(stats)
+}
 
-let power_source_name = Some(power_source.name);  // Extract just the `name` field as an Option<String>
-
-Ok(CpuInfo {
-    name,
-    median_frequency,
-    median_load: 0.0,
-    package_temp,
-    package_power,
-    cores,
-    governor,
-    available_governors,
-    boost_enabled,
-    smt_enabled,
-    scaling_driver,
-    amd_pstate_status,
-    min_freq,
-    max_freq,
-    hw_min_freq,
-    hw_max_freq,
-    all_power_sources,
-    power_source: power_source_name,  // Pass the Option<String> here
-})
-
+fn calculate_cpu_load() -> Result<HashMap<u32, f32>> {
+    let stats1 = read_cpu_stats()?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let stats2 = read_cpu_stats()?;
+    
+    let mut loads = HashMap::new();
+    
+    for (cpu_id, stat2) in stats2.iter() {
+        if let Some(stat1) = stats1.get(cpu_id) {
+            let total_diff = stat2.total().saturating_sub(stat1.total());
+            let work_diff = stat2.work().saturating_sub(stat1.work());
+            
+            let load = if total_diff > 0 {
+                (work_diff as f32 / total_diff as f32) * 100.0
+            } else {
+                0.0
+            };
+            
+            loads.insert(*cpu_id, load);
+        }
+    }
+    
+    Ok(loads)
 }
 
 fn get_cpu_name() -> Result<String> {
@@ -102,23 +93,40 @@ fn get_cpu_name() -> Result<String> {
 }
 
 fn get_cpu_count() -> Result<u32> {
-    let mut count = 0;
-    for i in 0..1024 {
-        let path = format!("/sys/devices/system/cpu/cpu{}", i);
-        if !Path::new(&path).exists() {
-            break;
-        }
-        count += 1;
-    }
-    Ok(count)
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
+    let count = cpuinfo.lines()
+        .filter(|line| line.starts_with("processor"))
+        .count();
+    Ok(count as u32)
 }
 
 fn read_cpu_frequency(cpu: u32) -> Result<u64> {
     let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", cpu);
-    fs::read_to_string(&path)?
-        .trim()
-        .parse()
-        .map_err(|e| anyhow!("Failed to parse frequency: {}", e))
+    if let Ok(s) = fs::read_to_string(&path) {
+        if let Ok(freq) = s.trim().parse() {
+            return Ok(freq);
+        }
+    }
+    
+    let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_cur_freq", cpu);
+    if let Ok(s) = fs::read_to_string(&path) {
+        if let Ok(freq) = s.trim().parse() {
+            return Ok(freq);
+        }
+    }
+    
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
+    for line in cpuinfo.lines().skip((cpu * 30) as usize).take(30) {
+        if line.starts_with("cpu MHz") {
+            if let Some(mhz) = line.split(':').nth(1) {
+                if let Ok(mhz_val) = mhz.trim().parse::<f64>() {
+                    return Ok((mhz_val * 1000.0) as u64);
+                }
+            }
+        }
+    }
+    
+    Ok(2000000)
 }
 
 fn calculate_median(values: &[u64]) -> u64 {
@@ -131,12 +139,14 @@ fn calculate_median(values: &[u64]) -> u64 {
 }
 
 fn get_core_temp(cpu: u32) -> Result<f32> {
-    // Try to find temperature for specific core
     for entry in fs::read_dir("/sys/class/hwmon")? {
         let entry = entry?;
         let name_path = entry.path().join("name");
         if let Ok(name) = fs::read_to_string(&name_path) {
-            if name.trim() == "coretemp" || name.trim() == "zenpower" {
+            let name = name.trim();
+            if name == "k10temp" {
+                return get_package_temp();
+            } else if name == "coretemp" {
                 let temp_path = entry.path().join(format!("temp{}_input", cpu + 2));
                 if let Ok(temp_str) = fs::read_to_string(&temp_path) {
                     if let Ok(temp) = temp_str.trim().parse::<f32>() {
@@ -154,7 +164,22 @@ fn get_package_temp() -> Result<f32> {
         let entry = entry?;
         let name_path = entry.path().join("name");
         if let Ok(name) = fs::read_to_string(&name_path) {
-            if name.trim() == "coretemp" || name.trim() == "zenpower" {
+            let name = name.trim();
+            if name == "k10temp" {
+                let temp_path = entry.path().join("temp1_input");
+                if let Ok(temp_str) = fs::read_to_string(&temp_path) {
+                    if let Ok(temp) = temp_str.trim().parse::<f32>() {
+                        return Ok(temp / 1000.0);
+                    }
+                }
+            } else if name == "coretemp" {
+                let temp_path = entry.path().join("temp1_input");
+                if let Ok(temp_str) = fs::read_to_string(&temp_path) {
+                    if let Ok(temp) = temp_str.trim().parse::<f32>() {
+                        return Ok(temp / 1000.0);
+                    }
+                }
+            } else if name == "zenpower" {
                 let temp_path = entry.path().join("temp1_input");
                 if let Ok(temp_str) = fs::read_to_string(&temp_path) {
                     if let Ok(temp) = temp_str.trim().parse::<f32>() {
@@ -167,33 +192,84 @@ fn get_package_temp() -> Result<f32> {
     Err(anyhow!("Package temperature not found"))
 }
 
-fn get_cpu_power() -> Option<f32> {
-    let all_sources = get_all_power_sources();
-    
-    // Priority 1: Try RAPL (Intel/AMD modern CPUs)
-    if let Some(rapl) = all_sources.iter().find(|s| s.name == "RAPL") {
-        return Some(rapl.value);
-    }
-    
-    // Priority 2: Try AMD-specific hwmon power
-    // Note: For AMD APUs (CPU+iGPU), this shows total power consumption
-    // Only use if no discrete GPU present to avoid confusion
-    if is_amd_cpu() && get_amd_dgpu_count() == 0 {
-        if let Some(amdgpu) = all_sources.iter().find(|s| s.name == "amdgpu") {
-            return Some(amdgpu.value);
-        }
-        if let Some(zenpower) = all_sources.iter().find(|s| s.name == "zenpower") {
-            return Some(zenpower.value);
+fn read_hwmon_power(hwmon_path: &Path) -> Result<f32> {
+    let power_input_path = hwmon_path.join("power1_input");
+    if let Ok(power_str) = fs::read_to_string(&power_input_path) {
+        if let Ok(microwatts) = power_str.trim().parse::<f32>() {
+            return Ok(microwatts / 1_000_000.0);
         }
     }
     
-    None
+    let power_avg_path = hwmon_path.join("power1_average");
+    if let Ok(power_str) = fs::read_to_string(&power_avg_path) {
+        if let Ok(microwatts) = power_str.trim().parse::<f32>() {
+            return Ok(microwatts / 1_000_000.0);
+        }
+    }
+    
+    Err(anyhow!("No power reading available"))
+}
+
+fn try_rapl() -> Result<f32> {
+    for entry in fs::read_dir("/sys/class/powercap")? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if let Ok(name) = fs::read_to_string(path.join("name")) {
+            if name.trim() == "package-0" {
+                if let Ok(energy_str) = fs::read_to_string(path.join("energy_uj")) {
+                    if let Ok(energy) = energy_str.trim().parse::<f64>() {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        if let Ok(energy2_str) = fs::read_to_string(path.join("energy_uj")) {
+                            if let Ok(energy2) = energy2_str.trim().parse::<f64>() {
+                                let diff = energy2 - energy;
+                                let power = (diff / 100000.0) as f32;
+                                return Ok(power);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err(anyhow!("RAPL not available"))
+}
+
+fn is_amd_cpu() -> bool {
+    if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+        for line in cpuinfo.lines() {
+            if line.starts_with("vendor_id") {
+                return line.contains("AuthenticAMD");
+            }
+        }
+    }
+    false
+}
+
+fn get_amd_dgpu_count() -> u32 {
+    let mut count = 0;
+    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name() {
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("card") && !name_str.contains("-") {
+                    let device_path = path.join("device/vendor");
+                    if let Ok(vendor) = fs::read_to_string(&device_path) {
+                        if vendor.trim() == "0x1002" {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if count > 1 { count - 1 } else { 0 }
 }
 
 fn get_all_power_sources() -> Vec<PowerSource> {
     let mut sources = Vec::new();
     
-    // Try RAPL
     if let Ok(power) = try_rapl() {
         sources.push(PowerSource {
             name: "RAPL".to_string(),
@@ -202,7 +278,6 @@ fn get_all_power_sources() -> Vec<PowerSource> {
         });
     }
     
-    // Try AMD hwmon sources
     if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
         for entry in entries.flatten() {
             let name_path = entry.path().join("name");
@@ -211,12 +286,17 @@ fn get_all_power_sources() -> Vec<PowerSource> {
                 
                 match name {
                     "amdgpu" => {
-                        if let Ok(power) = read_hwmon_power(&entry.path()) {
-                            sources.push(PowerSource {
-                                name: "amdgpu".to_string(),
-                                value: power,
-                                description: "AMD APU Total Power (CPU+iGPU)".to_string(),
-                            });
+                        let power_input = entry.path().join("power1_input");
+                        let power_avg = entry.path().join("power1_average");
+                        
+                        if power_input.exists() || power_avg.exists() {
+                            if let Ok(power) = read_hwmon_power(&entry.path()) {
+                                sources.push(PowerSource {
+                                    name: "amdgpu".to_string(),
+                                    value: power,
+                                    description: "AMD APU Total Power (CPU+iGPU)".to_string(),
+                                });
+                            }
                         }
                     },
                     "zenpower" => {
@@ -246,131 +326,127 @@ fn get_all_power_sources() -> Vec<PowerSource> {
     sources
 }
 
-fn read_hwmon_power(hwmon_path: &std::path::Path) -> Result<f32> {
-    let power_path = hwmon_path.join("power1_average");
-    if let Ok(power_str) = fs::read_to_string(&power_path) {
-        if let Ok(microwatts) = power_str.trim().parse::<f32>() {
-            return Ok(microwatts / 1_000_000.0);
+fn get_cpu_power() -> Option<f32> {
+    let all_sources = get_all_power_sources();
+    
+    if is_amd_cpu() && get_amd_dgpu_count() == 0 {
+        if let Some(amdgpu) = all_sources.iter().find(|s| s.name == "amdgpu") {
+            return Some(amdgpu.value);
         }
-    }
-    Err(anyhow!("Power reading not available"))
-}
-
-fn is_amd_cpu() -> bool {
-    if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
-        for line in cpuinfo.lines() {
-            if line.starts_with("vendor_id") && line.contains("AuthenticAMD") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn get_amd_dgpu_count() -> u32 {
-    let mut count = 0;
-    if let Ok(entries) = fs::read_dir("/sys/class/drm") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Check for discrete GPU (renderD129+, card1+)
-                if name.starts_with("renderD") {
-                    if let Ok(num) = name.trim_start_matches("renderD").parse::<u32>() {
-                        if num > 128 {
-                            // Check if it's AMD
-                            let vendor_path = path.join("device/vendor");
-                            if let Ok(vendor) = fs::read_to_string(&vendor_path) {
-                                if vendor.trim() == "0x1002" {
-                                    count += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    count
-}
-
-fn try_rapl() -> Result<f32> {
-    let path = "/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj";
-    if !Path::new(path).exists() {
-        return Err(anyhow!("RAPL not available"));
     }
     
-    let energy1: u64 = fs::read_to_string(path)?.trim().parse()?;
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let energy2: u64 = fs::read_to_string(path)?.trim().parse()?;
-    
-    let energy_diff = energy2.saturating_sub(energy1) as f32;
-    let watts = (energy_diff / 100000.0) * 10.0; // Convert to watts
-    
-    Ok(watts)
-}
-
-fn try_amd_hwmon_power() -> Result<f32> {
-    // For AMD APUs, look for amdgpu power reading
-    // This represents CPU+iGPU total power on APU systems
-    for entry in fs::read_dir("/sys/class/hwmon")? {
-        let entry = entry?;
-        let name_path = entry.path().join("name");
-        if let Ok(name) = fs::read_to_string(&name_path) {
-            let name = name.trim();
-            // Only use amdgpu power if it's the integrated GPU
-            if name == "amdgpu" {
-                let power_path = entry.path().join("power1_average");
-                if let Ok(power_str) = fs::read_to_string(&power_path) {
-                    if let Ok(microwatts) = power_str.trim().parse::<f32>() {
-                        return Ok(microwatts / 1_000_000.0);
-                    }
-                }
-            }
+    if is_amd_cpu() {
+        if let Some(zenpower) = all_sources.iter().find(|s| s.name == "zenpower") {
+            return Some(zenpower.value);
+        }
+        
+        if let Some(amd_energy) = all_sources.iter().find(|s| s.name == "amd_energy") {
+            return Some(amd_energy.value);
         }
     }
-    Err(anyhow!("AMD hwmon power not available"))
+    
+    if let Some(rapl) = all_sources.iter().find(|s| s.name == "RAPL") {
+        return Some(rapl.value);
+    }
+    
+    None
+}
+
+fn detect_cpu_capabilities() -> CpuCapabilities {
+    let base_path = "/sys/devices/system/cpu/cpu0/cpufreq";
+    
+    CpuCapabilities {
+        has_boost: Path::new("/sys/devices/system/cpu/cpufreq/boost").exists() ||
+                   Path::new("/sys/devices/system/cpu/intel_pstate/no_turbo").exists(),
+        
+        has_cpuinfo_max_freq: Path::new(&format!("{}/cpuinfo_max_freq", base_path)).exists(),
+        
+        has_cpuinfo_min_freq: Path::new(&format!("{}/cpuinfo_min_freq", base_path)).exists(),
+        
+        has_scaling_driver: Path::new(&format!("{}/scaling_driver", base_path)).exists() ||
+                           Path::new("/sys/devices/system/cpu/cpufreq/policy0/scaling_driver").exists(),
+        
+        has_energy_performance_preference: 
+            Path::new(&format!("{}/energy_performance_preference", base_path)).exists(),
+        
+        has_scaling_governor: Path::new(&format!("{}/scaling_governor", base_path)).exists(),
+        
+        has_smt: Path::new("/sys/devices/system/cpu/smt/control").exists(),
+        
+        has_scaling_min_freq: Path::new(&format!("{}/scaling_min_freq", base_path)).exists(),
+        
+        has_scaling_max_freq: Path::new(&format!("{}/scaling_max_freq", base_path)).exists(),
+        
+        has_available_governors: 
+            Path::new(&format!("{}/scaling_available_governors", base_path)).exists(),
+        
+        has_amd_pstate: Path::new("/sys/devices/system/cpu/amd_pstate/status").exists(),
+    }
 }
 
 fn read_governor() -> Result<String> {
-    fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+    let path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor";
+    
+    if !Path::new(path).exists() {
+        return Ok("not_available".to_string());
+    }
+    
+    fs::read_to_string(path)
         .map(|s| s.trim().to_string())
         .map_err(|e| anyhow!("Failed to read governor: {}", e))
 }
 
 fn read_available_governors() -> Result<Vec<String>> {
-    let governors = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")?;
+    let path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors";
+    
+    if !Path::new(path).exists() {
+        return Ok(vec![]);
+    }
+    
+    let governors = fs::read_to_string(path)?;
     Ok(governors.split_whitespace().map(String::from).collect())
 }
 
 fn is_boost_enabled() -> Result<bool> {
-    // Try AMD boost
     if let Ok(boost) = fs::read_to_string("/sys/devices/system/cpu/cpufreq/boost") {
         return Ok(boost.trim() == "1");
     }
     
-    // Try Intel turbo (inverted logic)
     if let Ok(no_turbo) = fs::read_to_string("/sys/devices/system/cpu/intel_pstate/no_turbo") {
         return Ok(no_turbo.trim() == "0");
     }
     
-    Err(anyhow!("Boost status not available"))
+    Ok(false)
 }
 
 fn is_smt_enabled() -> Result<bool> {
-    let status = fs::read_to_string("/sys/devices/system/cpu/smt/control")?;
+    let path = "/sys/devices/system/cpu/smt/control";
+    
+    if !Path::new(path).exists() {
+        return Ok(true);
+    }
+    
+    let status = fs::read_to_string(path)?;
     Ok(status.trim() == "on")
 }
 
 fn read_scaling_driver() -> Result<String> {
-    fs::read_to_string("/sys/devices/system/cpu/cpufreq/policy0/scaling_driver")
+    let path = "/sys/devices/system/cpu/cpufreq/policy0/scaling_driver";
+    
+    if !Path::new(path).exists() {
+        return Ok("unknown".to_string());
+    }
+    
+    fs::read_to_string(path)
         .map(|s| s.trim().to_string())
         .map_err(|e| anyhow!("Failed to read scaling driver: {}", e))
 }
 
 fn read_amd_pstate_status() -> Result<String> {
-    fs::read_to_string("/sys/devices/system/cpu/amd_pstate/status")
+    let path = "/sys/devices/system/cpu/amd_pstate/status";
+    fs::read_to_string(path)
         .map(|s| s.trim().to_string())
-        .map_err(|e| anyhow!("AMD pstate not available: {}", e))
+        .map_err(|e| anyhow!("Failed to read AMD pstate status: {}", e))
 }
 
 fn read_frequency_limits() -> (Option<u64>, Option<u64>) {
@@ -386,72 +462,268 @@ fn read_frequency_limits() -> (Option<u64>, Option<u64>) {
 }
 
 fn read_hw_frequency_limits() -> Result<(u64, u64)> {
-    let min_freq: u64 = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq")?
-        .trim()
-        .parse()?;
+    let min_path = "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq";
+    let max_path = "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq";
     
-    let max_freq: u64 = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")?
-        .trim()
-        .parse()?;
+    let min_freq: u64 = if let Ok(s) = fs::read_to_string(min_path) {
+        s.trim().parse().unwrap_or(400000)
+    } else {
+        400000
+    };
+    
+    let max_freq: u64 = if let Ok(s) = fs::read_to_string(max_path) {
+        s.trim().parse().unwrap_or(5000000)
+    } else {
+        5000000
+    };
     
     Ok((min_freq, max_freq))
+}
+
+fn read_energy_performance_preference() -> Option<String> {
+    let path = "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference";
+    fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+fn read_available_epp_options() -> Vec<String> {
+    let path = "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_available_preferences";
+    
+    if let Ok(content) = fs::read_to_string(path) {
+        content.split_whitespace().map(String::from).collect()
+    } else {
+        vec![
+            "performance".to_string(),
+            "balance_performance".to_string(),
+            "balance_power".to_string(),
+            "power".to_string(),
+        ]
+    }
+}
+
+pub fn get_tdp_profiles() -> Result<Vec<String>> {
+    let path = "/sys/devices/platform/tuxedo_io/performance_profiles_available";
+    if !Path::new(path).exists() {
+        return Ok(vec![]);
+    }
+    
+    let profiles = fs::read_to_string(path)?;
+    let profile_list: Vec<String> = profiles
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+    
+    Ok(profile_list)
+}
+
+pub fn get_current_tdp_profile() -> Result<String> {
+    let path = "/sys/devices/platform/tuxedo_io/performance_profile";
+    if !Path::new(path).exists() {
+        return Err(anyhow!("TDP profiles not available"));
+    }
+    
+    fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| anyhow!("Failed to read TDP profile: {}", e))
+}
+
+pub fn get_cpu_info() -> Result<CpuInfo> {
+    let name = get_cpu_name()?;
+    let core_count = get_cpu_count()?;
+    
+    let loads = calculate_cpu_load().unwrap_or_default();
+    
+    let mut cores = Vec::new();
+    let mut frequencies = Vec::new();
+    
+    for i in 0..core_count {
+        let freq = read_cpu_frequency(i).unwrap_or(2000000);
+        frequencies.push(freq);
+        cores.push(CoreInfo {
+            id: i,
+            frequency: freq,
+            load: loads.get(&i).copied().unwrap_or(0.0),
+            temperature: get_core_temp(i).unwrap_or(0.0),
+        });
+    }
+    
+    let median_frequency = calculate_median(&frequencies);
+    
+    let loads_vec: Vec<f32> = loads.values().copied().collect();
+    let median_load = if !loads_vec.is_empty() {
+        let mut sorted = loads_vec.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted[sorted.len() / 2]
+    } else {
+        0.0
+    };
+    
+    let package_temp = get_package_temp().unwrap_or(0.0);
+    let package_power = get_cpu_power();
+    
+    let capabilities = detect_cpu_capabilities();
+    
+    let governor = if capabilities.has_scaling_governor {
+        read_governor().unwrap_or_else(|_| "unknown".to_string())
+    } else {
+        "not_available".to_string()
+    };
+    
+    let available_governors = if capabilities.has_available_governors {
+        read_available_governors().unwrap_or_else(|_| vec![])
+    } else {
+        vec![]
+    };
+    
+    let boost_enabled = if capabilities.has_boost {
+        is_boost_enabled().unwrap_or(false)
+    } else {
+        false
+    };
+    
+    let smt_enabled = if capabilities.has_smt {
+        is_smt_enabled().unwrap_or(true)
+    } else {
+        true
+    };
+    
+    let scaling_driver = if capabilities.has_scaling_driver {
+        read_scaling_driver().unwrap_or_else(|_| "unknown".to_string())
+    } else {
+        "not_available".to_string()
+    };
+    
+    let amd_pstate_status = if capabilities.has_amd_pstate {
+        read_amd_pstate_status().ok()
+    } else {
+        None
+    };
+    
+    let (min_freq, max_freq) = if capabilities.has_scaling_min_freq && capabilities.has_scaling_max_freq {
+        read_frequency_limits()
+    } else {
+        (None, None)
+    };
+    
+    let (hw_min_freq, hw_max_freq) = if capabilities.has_cpuinfo_min_freq && capabilities.has_cpuinfo_max_freq {
+        read_hw_frequency_limits().unwrap_or((400000, 5000000))
+    } else {
+        (400000, 5000000)
+    };
+    
+    let energy_performance_preference = if capabilities.has_energy_performance_preference {
+        read_energy_performance_preference()
+    } else {
+        None
+    };
+    
+    let available_epp_options = if capabilities.has_energy_performance_preference {
+        read_available_epp_options()
+    } else {
+        vec![]
+    };
+
+    let all_power_sources = get_all_power_sources();
+    
+    let power_source = all_power_sources.iter()
+        .find(|s| s.name == "amdgpu")
+        .or_else(|| all_power_sources.iter().find(|s| s.name == "RAPL"))
+        .cloned()
+        .map(|s| s.name);
+
+    Ok(CpuInfo {
+        name,
+        median_frequency,
+        median_load,
+        package_temp,
+        package_power,
+        cores,
+        governor,
+        available_governors,
+        boost_enabled,
+        smt_enabled,
+        scaling_driver,
+        amd_pstate_status,
+        min_freq,
+        max_freq,
+        hw_min_freq,
+        hw_max_freq,
+        all_power_sources,
+        power_source,
+        energy_performance_preference,
+        available_epp_options,
+        capabilities,
+    })
+}
+
+pub fn get_system_info() -> Result<SystemInfo> {
+    let product_name = fs::read_to_string("/sys/class/dmi/id/product_name")
+        .unwrap_or_else(|_| "Unknown".to_string())
+        .trim()
+        .to_string();
+    
+    let manufacturer = fs::read_to_string("/sys/class/dmi/id/sys_vendor")
+        .unwrap_or_else(|_| "Unknown".to_string())
+        .trim()
+        .to_string();
+    
+    let bios_version = fs::read_to_string("/sys/class/dmi/id/bios_version")
+        .unwrap_or_else(|_| "Unknown".to_string())
+        .trim()
+        .to_string();
+    
+    Ok(SystemInfo {
+        product_name,
+        manufacturer,
+        bios_version,
+    })
 }
 
 pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
     let mut gpus = Vec::new();
     
-    // Try renderD devices first
-    for i in 128..132 {
-        let render_path = format!("/sys/class/drm/renderD{}", i);
-        if Path::new(&render_path).exists() {
-            if let Ok(gpu) = detect_gpu(&render_path, i - 128) {
-                gpus.push(gpu);
-            }
+    for i in 0..4 {
+        let card_path = format!("/sys/class/drm/card{}", i);
+        if !Path::new(&card_path).exists() {
+            continue;
+        }
+        
+        let device_path = format!("{}/device", card_path);
+        let vendor_path = format!("{}/vendor", device_path);
+        
+        if let Ok(vendor) = fs::read_to_string(&vendor_path) {
+            let vendor = vendor.trim();
+            let name = match vendor {
+                "0x1002" => "AMD GPU".to_string(),
+                "0x10de" => "NVIDIA GPU".to_string(),
+                "0x8086" => "Intel GPU".to_string(),
+                _ => format!("GPU {}", i),
+            };
+            
+            let gpu_type = if i == 0 {
+                GpuType::Integrated
+            } else {
+                GpuType::Discrete
+            };
+            
+            let status_path = format!("{}/power/runtime_status", device_path);
+            let status = fs::read_to_string(&status_path)
+                .unwrap_or_else(|_| "unknown".to_string())
+                .trim()
+                .to_string();
+            
+            gpus.push(GpuInfo {
+                name,
+                gpu_type,
+                status,
+            });
         }
     }
     
-    // Fallback to card devices
     if gpus.is_empty() {
-        for i in 0..4 {
-            let card_path = format!("/sys/class/drm/card{}", i);
-            if Path::new(&card_path).exists() {
-                if let Ok(gpu) = detect_gpu(&card_path, i) {
-                    gpus.push(gpu);
-                }
-            }
-        }
+        return Err(anyhow!("No GPUs detected"));
     }
     
     Ok(gpus)
-}
-
-fn detect_gpu(path: &str, id: u32) -> Result<GpuInfo> {
-    let device_path = format!("{}/device", path);
-    
-    let _vendor = fs::read_to_string(format!("{}/vendor", device_path))
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    
-    let gpu_type = if id == 0 {
-        GpuType::Integrated
-    } else {
-        GpuType::Discrete
-    };
-    
-    let status = fs::read_to_string(format!("{}/power/runtime_status", device_path))
-        .unwrap_or_else(|_| "unknown".to_string())
-        .trim()
-        .to_string();
-    
-    Ok(GpuInfo {
-        name: format!("GPU {}", id),
-        gpu_type,
-        status,
-        frequency: None,
-        temperature: None,
-        load: None,
-        power: None,
-        voltage: None,
-    })
 }
