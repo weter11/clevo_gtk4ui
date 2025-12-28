@@ -270,16 +270,16 @@ fn create_profile_row(
         reset_button.connect_clicked(move |_| {
             let mut cfg = config_clone.borrow_mut();
             if let Some(default_prof) = cfg.data.profiles.iter_mut().find(|p| p.is_default) {
-                *default_prof = Profile::default();
+                let reset_profile = default_prof.clone();  // Clone before modifying
+               *default_prof = Profile::default();
                 default_prof.is_default = true;
-                
-                let _ = cfg.save();
-                
-                let reset_profile = default_prof.clone();
-                drop(cfg);
-                
+        
+                drop(cfg);  // Explicitly drop mutable borrow
+        
+                let _ = config_clone.borrow().save();  // Now safe immutable borrow
+        
                 if let Some(client) = dbus_clone.borrow().as_ref() {
-                    let _ = client.apply_profile(&reset_profile);
+                   let _ = client.apply_profile(&reset_profile);
                 }
             }
         });
