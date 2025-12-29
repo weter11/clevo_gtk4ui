@@ -159,6 +159,82 @@ pub fn get_current_tdp_profile(&self) -> Result<String> {
     Ok(proxy.call("GetCurrentTdpProfile", &())?)
 }
 
+pub fn get_fan_speeds(&self) -> Result<Vec<(u32, u32)>> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    let json: String = proxy.call("GetFanSpeeds", &())?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    Ok(proxy.call("GetFanTemperature", &(fan_id,))?)
+}
+
+pub fn set_fan_speed(&self, fan_id: u32, speed: u32) -> Result<()> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    proxy.call::<_, _, ()>("SetFanSpeed", &(fan_id, speed))?;
+    Ok(())
+}
+
+pub fn set_fan_auto(&self, fan_id: u32) -> Result<()> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    proxy.call::<_, _, ()>("SetFanAuto", &(fan_id,))?;
+    Ok(())
+}
+
+pub fn get_webcam_state(&self) -> Result<bool> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    Ok(proxy.call("GetWebcamState", &())?)
+}
+
+pub fn set_webcam_state(&self, enabled: bool) -> Result<()> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    proxy.call::<_, _, ()>("SetWebcamState", &(enabled,))?;
+    Ok(())
+}
+
 pub fn set_tdp_profile(&self, profile: &str) -> Result<()> {
     let conn = self.connection.lock().unwrap();
     let proxy = zbus::blocking::Proxy::new(
