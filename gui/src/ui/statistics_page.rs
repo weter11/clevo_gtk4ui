@@ -673,53 +673,52 @@ fn create_fans_section() -> (adw::PreferencesGroup, WidgetRefs) {
 }
 
 fn update_fans_info(refs: &WidgetRefs) {
-    let mut fans_found = false;
+    for (_, row) in refs {
+        row.set_visible(false);
+    }
     
-    for (key, row) in refs {
-        if let Some(fan_id) = key.strip_prefix("fan") {
-            if let Ok(id) = fan_id.parse::<u32>() {
-                let fan_path = format!("/sys/devices/platform/tuxedo_io/fan{}_input", id);
-                if let Ok(speed) = std::fs::read_to_string(&fan_path) {
-                    if let Ok(rpm) = speed.trim().parse::<u32>() {
-                        if rpm > 0 {
-                            row.set_subtitle(&format!("{} RPM", rpm));
-                            row.set_visible(true);
-                            fans_found = true;
-                            continue;
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        match client.get_fan_speeds() {
+            Ok(fans) => {
+                for (idx, (fan_id, rpm)) in fans.iter().enumerate() {
+                    if idx < refs.len() {
+                        let (_, row) = &refs[idx];
+                        
+                        match client.get_fan_temperature(*fan_id) {
+                            Ok(temp) => {
+                                row.set_subtitle(&format!("{} RPM - {}°C", rpm, temp));
+                            }
+                            Err(_) => {
+                                row.set_subtitle(&format!("{} RPM", rpm));
+                            }
                         }
+                        
+                        row.set_visible(true);
                     }
                 }
             }
-        }
-    }
-    
-    if !fans_found {
-        if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
-            let mut fan_idx = 0;
-            for entry in entries.flatten() {
-                for i in 1..10 {
-                    let fan_input = format!("fan{}_input", i);
-                    let fan_path = entry.path().join(&fan_input);
-                    
-                    if let Ok(speed) = std::fs::read_to_string(&fan_path) {
-                        if let Ok(rpm) = speed.trim().parse::<u32>() {
-                            if rpm > 0 && fan_idx < refs.len() {
-                                let (_, row) = &refs[fan_idx];
-                                row.set_subtitle(&format!("{} RPM", rpm));
-                                row.set_visible(true);
-                                fan_idx += 1;
-                                fans_found = true;
+            Err(_) => {
+                if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
+                    let mut fan_idx = 0;
+                    for entry in entries.flatten() {
+                        for i in 1..10 {
+                            let fan_input = format!("fan{}_input", i);
+                            let fan_path = entry.path().join(&fan_input);
+                            
+                            if let Ok(speed) = std::fs::read_to_string(&fan_path) {
+                                if let Ok(rpm) = speed.trim().parse::<u32>() {
+                                    if rpm > 0 && fan_idx < refs.len() {
+                                        let (_, row) = &refs[fan_idx];
+                                        row.set_subtitle(&format!("{} RPM", rpm));
+                                        row.set_visible(true);
+                                        fan_idx += 1;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    }
-    
-    if !fans_found {
-        for (_, row) in refs {
-            row.set_visible(false);
         }
     }
 }
