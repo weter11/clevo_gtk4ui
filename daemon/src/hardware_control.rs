@@ -2,6 +2,8 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 use tuxedo_common::types::*;
+mod tuxedo_io;
+use tuxedo_io::TuxedoIo;
 
 pub fn set_cpu_governor(governor: &str) -> Result<()> {
     let cpu_count = get_cpu_count()?;
@@ -219,61 +221,135 @@ fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
     Ok(())
 }
 
-fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
-    let tuxedo_io_path = "/sys/devices/platform/tuxedo_io";
-    
-    if !Path::new(tuxedo_io_path).exists() {
-        log::warn!("tuxedo_io not available, skipping fan settings");
-        return Ok(());
+pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("TDP profiles not available"));
     }
     
-    if !settings.control_enabled {
-        // Set to auto mode
-        let mode_path = format!("{}/fan_mode", tuxedo_io_path);
-        if Path::new(&mode_path).exists() {
-            fs::write(&mode_path, "auto")?;
-            log::info!("Set fans to auto mode");
-        }
-        return Ok(());
+    let io = TuxedoIo::new()?;
+    let profiles = io.get_performance_profiles()?;
+    
+    if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
+        io.set_performance_profile(profile_id as u32)?;
+        log::info!("Set TDP profile to: {} (id: {})", profile_name, profile_id);
+        Ok(())
+    } else {
+        Err(anyhow!("Profile '{}' not found", profile_name))
+    }
+}
+
+pub fn set_fan_speed(fan_id: u32, speed_percent: u32) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Fan control not available"));
     }
     
-    // Set to manual mode
-    let mode_path = format!("{}/fan_mode", tuxedo_io_path);
-    if Path::new(&mode_path).exists() {
-        fs::write(&mode_path, "manual")?;
-    }
+    let speed = speed_percent.min(100);
+    let io = TuxedoIo::new()?;
+    io.set_fan_speed(fan_id, speed)?;
     
-    // Apply fan curves
-    for curve in &settings.curves {
-        for (idx, (temp, speed)) in curve.points.iter().enumerate() {
-            let temp_path = format!("{}/fan{}_temp{}", tuxedo_io_path, curve.fan_id, idx);
-            let speed_path = format!("{}/fan{}_speed{}", tuxedo_io_path, curve.fan_id, idx);
-            
-            if Path::new(&temp_path).exists() {
-                fs::write(&temp_path, temp.to_string())?;
-            }
-            
-            if Path::new(&speed_path).exists() {
-                fs::write(&speed_path, speed.to_string())?;
-            }
-        }
-        
-        log::info!("Applied fan curve for fan {}", curve.fan_id);
-    }
-    
+    log::info!("Set fan {} to {}%", fan_id, speed);
     Ok(())
 }
 
-fn get_cpu_count() -> Result<u32> {
-    let mut count = 0;
-    for i in 0..1024 {
-        let path = format!("/sys/devices/system/cpu/cpu{}", i);
-        if !Path::new(&path).exists() {
-            break;
-        }
-        count += 1;
+pub fn set_fan_auto(fan_id: u32) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Fan control not available"));
     }
-    Ok(count)
+    
+    let io = TuxedoIo::new()?;
+    io.set_fan_speed(fan_id, 0xFF)?;
+    
+    log::info!("Set fan {} to auto mode", fan_id);
+    Ok(())
+}
+
+fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        log::info!("Fan control not available (/dev/tuxedo_io not present)");
+        return Ok(());
+    }
+    
+    log::info!("Applying fan settings: enabled={}", settings.control_enabled);
+    
+    if !settings.control_enabled {
+        for fan_id in 0..4 {
+            let _ = set_fan_auto(fan_id);
+        }
+        log::info!("Set all fans to auto mode");
+        return Ok(());
+    }
+    
+    for curve in &settings.curves {
+        if let Some(io) = TuxedoIo::new().ok() {
+            match io.get_fan_temperature(curve.fan_id) {
+                Ok(temp) => {
+                    let speed = calculate_fan_speed_from_curve(&curve.points, temp as f32);
+                    let _ = set_fan_speed(curve.fan_id, speed as u32);
+                }
+                Err(e) => {
+                    log::warn!("Failed to get temperature for fan {}: {}", curve.fan_id, e);
+                }
+            }
+        }
+    }
+    
+    log::info!("Fan settings applied");
+    Ok(())
+}
+
+fn calculate_fan_speed_from_curve(points: &[(f32, u32)], temp: f32) -> u32 {
+    if points.is_empty() {
+        return 50;
+    }
+    
+    if points.len() == 1 {
+        return points[0].1;
+    }
+    
+    let mut sorted_points = points.to_vec();
+    sorted_points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    
+    if temp <= sorted_points[0].0 {
+        return sorted_points[0].1;
+    }
+    
+    if temp >= sorted_points[sorted_points.len() - 1].0 {
+        return sorted_points[sorted_points.len() - 1].1;
+    }
+    
+    for i in 0..sorted_points.len() - 1 {
+        let (temp1, speed1) = sorted_points[i];
+        let (temp2, speed2) = sorted_points[i + 1];
+        
+        if temp >= temp1 && temp <= temp2 {
+            let ratio = (temp - temp1) / (temp2 - temp1);
+            let speed = speed1 as f32 + ratio * (speed2 as f32 - speed1 as f32);
+            return speed as u32;
+        }
+    }
+    
+    50
+}
+
+pub fn set_webcam_state(enabled: bool) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Webcam control not available"));
+    }
+    
+    let io = TuxedoIo::new()?;
+    io.set_webcam_state(enabled)?;
+    
+    log::info!("Set webcam to: {}", if enabled { "enabled" } else { "disabled" });
+    Ok(())
+}
+
+pub fn get_webcam_state() -> Result<bool> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Webcam state not available"));
+    }
+    
+    let io = TuxedoIo::new()?;
+    io.get_webcam_state()
 }
 
 fn find_keyboard_backlight_path() -> Option<String> {
@@ -294,17 +370,6 @@ fn find_keyboard_backlight_path() -> Option<String> {
     
     log::warn!("No keyboard backlight found");
     None
-}
-
-pub fn set_tdp_profile(profile: &str) -> Result<()> {
-    let path = "/sys/devices/platform/tuxedo_io/performance_profile";
-    if !Path::new(path).exists() {
-        return Err(anyhow!("TDP profiles not available"));
-    }
-    
-    fs::write(path, profile)?;
-    log::info!("Set TDP profile to: {}", profile);
-    Ok(())
 }
 
 pub fn set_energy_performance_preference(epp: &str) -> Result<()> {
