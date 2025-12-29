@@ -2,8 +2,16 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 use tuxedo_common::types::*;
-mod tuxedo_io;
-use tuxedo_io::TuxedoIo;
+use crate::tuxedo_io::TuxedoIo;
+// use tuxedo_io::TuxedoIo;
+
+fn get_cpu_count() -> Result<u32> {
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
+    let count = cpuinfo.lines()
+        .filter(|line| line.starts_with("processor"))
+        .count();
+    Ok(count as u32)
+}
 
 pub fn set_cpu_governor(governor: &str) -> Result<()> {
     let cpu_count = get_cpu_count()?;
