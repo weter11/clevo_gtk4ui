@@ -84,7 +84,7 @@ fn update_statistics(widgets: &[((&str, WidgetRefs))], dbus_client: Rc<RefCell<O
         match *section_type {
             "cpu" => update_cpu_info(refs, dbus_client.clone()),
             "battery" => update_battery_info(refs),
-            "fans" => update_fans_info(refs),
+            "fans" => update_fans_info(refs, dbus_client.clone()),
             _ => {}
         }
     }
