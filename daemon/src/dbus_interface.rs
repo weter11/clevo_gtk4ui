@@ -95,11 +95,11 @@ async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
 }
 
 async fn get_fan_temperature(&self, fan_id: u32) -> Result<u32, zbus::fdo::Error> {
-    if !crate::hardware_detection::TuxedoIo::is_available() {
+    if !crate::tuxedo_io::TuxedoIo::is_available() {
         return Err(zbus::fdo::Error::Failed("tuxedo_io not available".to_string()));
     }
     
-    match crate::hardware_detection::TuxedoIo::new() {
+    match crate::tuxedo_io::TuxedoIo::new() {
         Ok(io) => io.get_fan_temperature(fan_id)
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
         Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
