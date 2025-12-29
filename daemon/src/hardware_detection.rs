@@ -2,7 +2,8 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
-
+mod tuxedo_io;
+use tuxedo_io::TuxedoIo;
 use tuxedo_common::types::*;
 
 #[derive(Debug, Clone)]
@@ -503,29 +504,102 @@ fn read_available_epp_options() -> Vec<String> {
 }
 
 pub fn get_tdp_profiles() -> Result<Vec<String>> {
-    let path = "/sys/devices/platform/tuxedo_io/performance_profiles_available";
-    if !Path::new(path).exists() {
+    if !TuxedoIo::is_available() {
+        log::info!("TDP profiles not available (/dev/tuxedo_io not present)");
         return Ok(vec![]);
     }
     
-    let profiles = fs::read_to_string(path)?;
-    let profile_list: Vec<String> = profiles
-        .split_whitespace()
-        .map(String::from)
-        .collect();
-    
-    Ok(profile_list)
+    match TuxedoIo::new() {
+        Ok(io) => {
+            match io.get_performance_profiles() {
+                Ok(profiles) => {
+                    log::info!("Available TDP profiles: {:?}", profiles);
+                    Ok(profiles)
+                }
+                Err(e) => {
+                    log::warn!("Failed to get TDP profiles: {}", e);
+                    Ok(vec![])
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to open /dev/tuxedo_io: {}", e);
+            Ok(vec![])
+        }
+    }
 }
 
 pub fn get_current_tdp_profile() -> Result<String> {
-    let path = "/sys/devices/platform/tuxedo_io/performance_profile";
-    if !Path::new(path).exists() {
+    if !TuxedoIo::is_available() {
         return Err(anyhow!("TDP profiles not available"));
     }
     
-    fs::read_to_string(path)
-        .map(|s| s.trim().to_string())
-        .map_err(|e| anyhow!("Failed to read TDP profile: {}", e))
+    let io = TuxedoIo::new()?;
+    let profile_id = io.get_performance_profile()?;
+    let profiles = io.get_performance_profiles()?;
+    
+    if (profile_id as usize) < profiles.len() {
+        Ok(profiles[profile_id as usize].clone())
+    } else {
+        Ok(format!("Profile {}", profile_id))
+    }
+}
+
+pub fn get_fan_speeds() -> Result<Vec<(u32, u32)>> {
+    if !TuxedoIo::is_available() {
+        return Ok(vec![]);
+    }
+    
+    let io = TuxedoIo::new()?;
+    let mut fans = Vec::new();
+    
+    for fan_id in 0..4 {
+        match io.get_fan_speed(fan_id) {
+            Ok(speed) => {
+                if speed > 0 {
+                    fans.push((fan_id, speed));
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    
+    Ok(fans)
+}
+
+pub fn get_fan_temperatures() -> Result<Vec<(u32, u32)>> {
+    if !TuxedoIo::is_available() {
+        return Ok(vec![]);
+    }
+    
+    let io = TuxedoIo::new()?;
+    let mut temps = Vec::new();
+    
+    for fan_id in 0..4 {
+        match io.get_fan_temperature(fan_id) {
+            Ok(temp) => {
+                if temp > 0 {
+                    temps.push((fan_id, temp));
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    
+    Ok(temps)
+}
+
+pub fn get_tdp_info() -> Result<(u32, u32, u32)> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("TDP info not available"));
+    }
+    
+    let io = TuxedoIo::new()?;
+    let current = io.get_tdp()?;
+    let min = io.get_tdp_min()?;
+    let max = io.get_tdp_max()?;
+    
+    Ok((current, min, max))
 }
 
 pub fn get_cpu_info() -> Result<CpuInfo> {
