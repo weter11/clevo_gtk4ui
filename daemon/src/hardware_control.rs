@@ -305,32 +305,32 @@ fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
     Ok(())
 }
 
-fn calculate_fan_speed_from_curve(points: &[(f32, u32)], temp: f32) -> u32 {
+fn calculate_fan_speed_from_curve(points: &[(u8, u8)], temp: f32) -> u32 {
     if points.is_empty() {
         return 50;
     }
     
     if points.len() == 1 {
-        return points[0].1;
+        return points[0].1 as u32;
     }
     
     let mut sorted_points = points.to_vec();
-    sorted_points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    sorted_points.sort_by(|a, b| a.0.cmp(&b.0));
     
-    if temp <= sorted_points[0].0 {
-        return sorted_points[0].1;
+    if temp <= sorted_points[0].0 as f32 {
+        return sorted_points[0].1 as u32;
     }
     
-    if temp >= sorted_points[sorted_points.len() - 1].0 {
-        return sorted_points[sorted_points.len() - 1].1;
+    if temp >= sorted_points[sorted_points.len() - 1].0 as f32 {
+        return sorted_points[sorted_points.len() - 1].1 as u32;
     }
     
     for i in 0..sorted_points.len() - 1 {
         let (temp1, speed1) = sorted_points[i];
         let (temp2, speed2) = sorted_points[i + 1];
         
-        if temp >= temp1 && temp <= temp2 {
-            let ratio = (temp - temp1) / (temp2 - temp1);
+        if temp >= temp1 as f32 && temp <= temp2 as f32 {
+            let ratio = (temp - temp1 as f32) / (temp2 as f32 - temp1 as f32);
             let speed = speed1 as f32 + ratio * (speed2 as f32 - speed1 as f32);
             return speed as u32;
         }
