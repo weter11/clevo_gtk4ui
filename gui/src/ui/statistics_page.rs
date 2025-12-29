@@ -672,7 +672,14 @@ fn create_fans_section() -> (adw::PreferencesGroup, WidgetRefs) {
     (group, refs)
 }
 
-fn update_fans_info(refs: &WidgetRefs) {
+fn create_cpu_tuning_section(
+    profile: &Profile,
+    config: Rc<RefCell<Config>>,
+    _dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    cpu_info: Option<tuxedo_common::types::CpuInfo>,
+) -> adw::PreferencesGroup {
+
+fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>>>) {
     for (_, row) in refs {
         row.set_visible(false);
     }
