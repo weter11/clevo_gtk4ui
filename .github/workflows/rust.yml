@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - new_variant
+      - perplexity
   pull_request:
     branches: [ "main" ]
 
