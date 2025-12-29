@@ -2,7 +2,7 @@ mod dbus_interface;
 mod fan_daemon;
 mod hardware_control;
 mod hardware_detection;
-
+mod tuxedo_io;
 use anyhow::Result;
 use tokio::signal;
 
