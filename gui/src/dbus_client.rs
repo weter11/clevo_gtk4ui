@@ -260,4 +260,118 @@ pub fn set_energy_performance_preference(&self, epp: &str) -> Result<()> {
     proxy.call::<_, _, ()>("SetEnergyPerformancePreference", &(epp,))?;
     Ok(())
 }
+
+    pub fn get_hardware_interface_info(&self) -> Result<String> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        Ok(proxy.call("GetHardwareInterfaceInfo", &())?)
+    }
+    
+    // Battery charge control methods
+    pub fn get_battery_charge_type(&self) -> Result<String> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        Ok(proxy.call("GetBatteryChargeType", &())?)
+    }
+    
+    pub fn set_battery_charge_type(&self, charge_type: &str) -> Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        proxy.call::<_, _, ()>("SetBatteryChargeType", &(charge_type,))?;
+        Ok(())
+    }
+    
+    pub fn get_battery_charge_start_threshold(&self) -> Result<u8> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        Ok(proxy.call("GetBatteryChargeStartThreshold", &())?)
+    }
+    
+    pub fn set_battery_charge_start_threshold(&self, threshold: u8) -> Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        proxy.call::<_, _, ()>("SetBatteryChargeStartThreshold", &(threshold,))?;
+        Ok(())
+    }
+    
+    pub fn get_battery_charge_end_threshold(&self) -> Result<u8> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        Ok(proxy.call("GetBatteryChargeEndThreshold", &())?)
+    }
+    
+    pub fn set_battery_charge_end_threshold(&self, threshold: u8) -> Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        proxy.call::<_, _, ()>("SetBatteryChargeEndThreshold", &(threshold,))?;
+        Ok(())
+    }
+    
+    pub fn get_battery_available_start_thresholds(&self) -> Result<Vec<u8>> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        let json: String = proxy.call("GetBatteryAvailableStartThresholds", &())?;
+        Ok(serde_json::from_str(&json)?)
+    }
+    
+    pub fn get_battery_available_end_thresholds(&self) -> Result<Vec<u8>> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        let json: String = proxy.call("GetBatteryAvailableEndThresholds", &())?;
+        Ok(serde_json::from_str(&json)?)
+    }
 }
