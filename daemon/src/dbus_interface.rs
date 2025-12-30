@@ -130,6 +130,98 @@ async fn set_energy_performance_preference(&self, epp: &str) -> Result<(), zbus:
     crate::hardware_control::set_energy_performance_preference(epp)
         .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
 }
+
+    // Battery charge control methods
+    async fn get_battery_charge_type(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.get_charge_type()
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn set_battery_charge_type(&self, charge_type: &str) -> Result<(), zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.set_charge_type(charge_type)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_battery_charge_start_threshold(&self) -> Result<u8, zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.get_charge_control_start_threshold()
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn set_battery_charge_start_threshold(&self, threshold: u8) -> Result<(), zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.set_charge_control_start_threshold(threshold)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_battery_charge_end_threshold(&self) -> Result<u8, zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.get_charge_control_end_threshold()
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn set_battery_charge_end_threshold(&self, threshold: u8) -> Result<(), zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => battery.set_charge_control_end_threshold(threshold)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_battery_available_start_thresholds(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => {
+                let thresholds = battery.get_available_start_thresholds()
+                    .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+                serde_json::to_string(&thresholds)
+                    .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+            }
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_battery_available_end_thresholds(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::battery_control::BatteryControl::new() {
+            Ok(battery) => {
+                let thresholds = battery.get_available_end_thresholds()
+                    .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+                serde_json::to_string(&thresholds)
+                    .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+            }
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_hardware_interface_info(&self) -> Result<String, zbus::fdo::Error> {
+        if !crate::tuxedo_io::TuxedoIo::is_available() {
+            return Ok("None".to_string());
+        }
+        
+        match crate::tuxedo_io::TuxedoIo::new() {
+            Ok(io) => {
+                let interface = match io.get_interface() {
+                    crate::tuxedo_io::HardwareInterface::Clevo => "Clevo",
+                    crate::tuxedo_io::HardwareInterface::Uniwill => "Uniwill",
+                    crate::tuxedo_io::HardwareInterface::None => "None",
+                };
+                let fan_count = io.get_fan_count();
+                Ok(format!("Interface: {}, Fans: {}", interface, fan_count))
+            }
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
 }
 
 pub async fn start_service(_connection: Connection) -> Result<()> {
