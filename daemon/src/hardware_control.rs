@@ -400,3 +400,171 @@ pub fn set_energy_performance_preference(epp: &str) -> Result<()> {
     log::info!("Set energy performance preference to: {}", epp);
     Ok(())
 }
+
+#[derive(Debug, Clone)]
+pub struct RgbKeyboardControl {
+    base_path: String,
+}
+
+impl RgbKeyboardControl {
+    pub fn new() -> Result<Self> {
+        let base_path = Self::find_keyboard_backlight_path()?;
+        Ok(Self { base_path })
+    }
+    
+    pub fn is_available() -> bool {
+        Self::find_keyboard_backlight_path().is_ok()
+    }
+    
+    fn find_keyboard_backlight_path() -> Result<String> {
+        let possible_paths = vec![
+            "/sys/class/leds/rgb:kbd_backlight",
+            "/sys/class/leds/tuxedo::kbd_backlight",
+            "/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight",
+            "/sys/class/leds/asus::kbd_backlight",
+        ];
+        
+        for path in possible_paths {
+            let brightness_path = format!("{}/brightness", path);
+            if Path::new(&brightness_path).exists() {
+                log::info!("Found keyboard backlight at: {}", path);
+                return Ok(path.to_string());
+            }
+        }
+        
+        Err(anyhow!("No RGB keyboard backlight found"))
+    }
+    
+    /// Set RGB color for keyboard backlight
+    pub fn set_color(&self, red: u8, green: u8, blue: u8) -> Result<()> {
+        let color_path = format!("{}/multi_intensity", self.base_path);
+        if !Path::new(&color_path).exists() {
+            return Err(anyhow!("RGB control not available"));
+        }
+        
+        let color_str = format!("{} {} {}", red, green, blue);
+        fs::write(&color_path, color_str)?;
+        
+        log::info!("Set keyboard RGB color: ({}, {}, {})", red, green, blue);
+        Ok(())
+    }
+    
+    /// Set keyboard brightness (0-100%)
+    pub fn set_brightness(&self, brightness: u8) -> Result<()> {
+        let brightness_path = format!("{}/brightness", self.base_path);
+        let max_brightness_path = format!("{}/max_brightness", self.base_path);
+        
+        let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+            max_str.trim().parse().unwrap_or(255)
+        } else {
+            255
+        };
+        
+        let actual_brightness = ((brightness as u32) * max_brightness) / 100;
+        fs::write(&brightness_path, actual_brightness.to_string())?;
+        
+        log::info!("Set keyboard brightness to {}%", brightness);
+        Ok(())
+    }
+    
+    /// Get current brightness (0-100%)
+    pub fn get_brightness(&self) -> Result<u8> {
+        let brightness_path = format!("{}/brightness", self.base_path);
+        let max_brightness_path = format!("{}/max_brightness", self.base_path);
+        
+        let current: u32 = fs::read_to_string(&brightness_path)?
+            .trim()
+            .parse()?;
+        
+        let max: u32 = fs::read_to_string(&max_brightness_path)?
+            .trim()
+            .parse()
+            .unwrap_or(255);
+        
+        let percent = ((current * 100) / max) as u8;
+        Ok(percent)
+    }
+    
+    /// Set keyboard mode (if supported)
+    pub fn set_mode(&self, mode: KeyboardMode) -> Result<()> {
+        match mode {
+            KeyboardMode::Static { r, g, b } => {
+                self.set_color(r, g, b)?;
+            }
+            KeyboardMode::Breathing { r, g, b, speed } => {
+                // Some keyboards support breathing mode via sysfs
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "breathing")?;
+                }
+                self.set_color(r, g, b)?;
+                log::info!("Set breathing mode with speed {}", speed);
+            }
+            KeyboardMode::Wave { speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "wave")?;
+                    log::info!("Set wave mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Wave mode not supported"));
+                }
+            }
+            KeyboardMode::Rainbow { speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "rainbow")?;
+                    log::info!("Set rainbow mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Rainbow mode not supported"));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum KeyboardMode {
+    Static { r: u8, g: u8, b: u8 },
+    Breathing { r: u8, g: u8, b: u8, speed: u8 },
+    Wave { speed: u8 },
+    Rainbow { speed: u8 },
+}
+
+// Add DBus methods for RGB control
+impl ControlInterface {
+    async fn set_keyboard_rgb(&self, red: u8, green: u8, blue: u8) -> Result<(), zbus::fdo::Error> {
+        match RgbKeyboardControl::new() {
+            Ok(kbd) => kbd.set_color(red, green, blue)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn set_keyboard_brightness(&self, brightness: u8) -> Result<(), zbus::fdo::Error> {
+        match RgbKeyboardControl::new() {
+            Ok(kbd) => kbd.set_brightness(brightness)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn get_keyboard_brightness(&self) -> Result<u8, zbus::fdo::Error> {
+        match RgbKeyboardControl::new() {
+            Ok(kbd) => kbd.get_brightness()
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+    
+    async fn set_keyboard_mode(&self, mode_json: &str) -> Result<(), zbus::fdo::Error> {
+        let mode: KeyboardMode = serde_json::from_str(mode_json)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        
+        match RgbKeyboardControl::new() {
+            Ok(kbd) => kbd.set_mode(mode)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+}
