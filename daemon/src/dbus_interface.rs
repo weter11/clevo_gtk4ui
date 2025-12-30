@@ -94,43 +94,38 @@ async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
     }
 }
 
-async fn get_fan_temperature(&self, fan_id: u32) -> Result<u32, zbus::fdo::Error> {
-    if !crate::tuxedo_io::TuxedoIo::is_available() {
-        return Err(zbus::fdo::Error::Failed("tuxedo_io not available".to_string()));
+    async fn get_fan_temperature(&self, fan_id: u32) -> Result<u32, zbus::fdo::Error> {
+        if !crate::tuxedo_io::TuxedoIo::is_available() {
+            return Err(zbus::fdo::Error::Failed("tuxedo_io not available".to_string()));
+        }
+        
+        match crate::tuxedo_io::TuxedoIo::new() {
+            Ok(io) => io.get_fan_temperature(fan_id)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
     }
     
-    match crate::tuxedo_io::TuxedoIo::new() {
-        Ok(io) => io.get_fan_temperature(fan_id)
-            .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
-        Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+    async fn set_fan_speed(&self, fan_id: u32, speed: u32) -> Result<(), zbus::fdo::Error> {
+        crate::hardware_control::set_fan_speed(fan_id, speed)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
-}
-
-async fn set_fan_speed(&self, fan_id: u32, speed: u32) -> Result<(), zbus::fdo::Error> {
-    crate::hardware_control::set_fan_speed(fan_id, speed)
-        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
-}
-
-async fn set_fan_auto(&self, fan_id: u32) -> Result<(), zbus::fdo::Error> {
-    crate::hardware_control::set_fan_auto(fan_id)
-        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
-}
-
-async fn get_webcam_state(&self) -> Result<bool, zbus::fdo::Error> {
-    crate::hardware_control::get_webcam_state()
-        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
-}
-
-async fn set_webcam_state(&self, enabled: bool) -> Result<(), zbus::fdo::Error> {
-    crate::hardware_control::set_webcam_state(enabled)
-        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
-}
-
-async fn set_energy_performance_preference(&self, epp: &str) -> Result<(), zbus::fdo::Error> {
-    crate::hardware_control::set_energy_performance_preference(epp)
-        .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
-}
-
+    
+    async fn set_fan_auto(&self, fan_id: u32) -> Result<(), zbus::fdo::Error> {
+        crate::hardware_control::set_fan_auto(fan_id)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+    
+    async fn get_webcam_state(&self) -> Result<bool, zbus::fdo::Error> {
+        crate::hardware_control::get_webcam_state()
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+    
+    async fn set_webcam_state(&self, enabled: bool) -> Result<(), zbus::fdo::Error> {
+        crate::hardware_control::set_webcam_state(enabled)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
+    
     // Battery charge control methods
     async fn get_battery_charge_type(&self) -> Result<String, zbus::fdo::Error> {
         match crate::battery_control::BatteryControl::new() {
