@@ -235,7 +235,7 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     }
     
     let io = TuxedoIo::new()?;
-    let profiles = io.get_performance_profiles()?;
+    let profiles = io.get_available_profiles()?;
     
     if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
         io.set_performance_profile(profile_id as u32)?;
@@ -265,9 +265,9 @@ pub fn set_fan_auto(fan_id: u32) -> Result<()> {
     }
     
     let io = TuxedoIo::new()?;
-    io.set_fan_speed(fan_id, 0xFF)?;
+    io.set_fan_auto()?;
     
-    log::info!("Set fan {} to auto mode", fan_id);
+    log::info!("Set all fans to auto mode");
     Ok(())
 }
 
@@ -280,15 +280,15 @@ fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
     log::info!("Applying fan settings: enabled={}", settings.control_enabled);
     
     if !settings.control_enabled {
-        for fan_id in 0..4 {
-            let _ = set_fan_auto(fan_id);
-        }
+        set_fan_auto(0)?; // This sets all fans to auto
         log::info!("Set all fans to auto mode");
         return Ok(());
     }
     
+    // Apply custom fan curves
+    let io = TuxedoIo::new()?;
     for curve in &settings.curves {
-        if let Some(io) = TuxedoIo::new().ok() {
+        if curve.fan_id < io.get_fan_count() {
             match io.get_fan_temperature(curve.fan_id) {
                 Ok(temp) => {
                     let speed = calculate_fan_speed_from_curve(&curve.points, temp as f32);
