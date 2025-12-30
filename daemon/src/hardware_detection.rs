@@ -535,8 +535,8 @@ pub fn get_current_tdp_profile() -> Result<String> {
     }
     
     let io = TuxedoIo::new()?;
-    let profile_id = io.get_performance_profile()?;
-    let profiles = io.get_performance_profiles()?;
+    let profile_id = io.get_available_profile()?;
+    let profiles = io.get_available_profiles()?;
     
     if (profile_id as usize) < profiles.len() {
         Ok(profiles[profile_id as usize].clone())
