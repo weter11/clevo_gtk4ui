@@ -180,7 +180,7 @@ pub fn create_fan_curve_editor(
     fan_id: u32,
     current_curve: &FanCurve,
     config: Rc<RefCell<Config>>,
-) -> gtk::Box {
+) -> gtk4::Box {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
     
     let title = gtk::Label::new(Some(&format!("Fan {} Curve", fan_id)));
