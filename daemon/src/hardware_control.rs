@@ -235,7 +235,7 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     }
     
     let io = TuxedoIo::new()?;
-    let profiles = io.get_available_profiles()?;
+    let profiles = io.get_performance_profiles()?;
     
     if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
         io.set_performance_profile(profile_id as u32)?;
