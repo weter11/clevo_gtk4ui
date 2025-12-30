@@ -233,7 +233,7 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     if !TuxedoIo::is_available() {
         return Err(anyhow!("TDP profiles not available"));
     }
-
+    
     let io = TuxedoIo::new()?;
     let profiles = io.get_available_profiles()?;
     
