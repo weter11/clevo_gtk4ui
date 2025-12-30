@@ -383,7 +383,7 @@ impl TuxedoIo {
             match tdp_index {
                 0 => { let _ = ioctl_uw_tdp0_max(fd, &mut result)?; }
                 1 => { let _ = ioctl_uw_tdp1_max(fd, &mut result)?; }
-                2 => { let _ = ioctl_uw_tdp2_max(fd, &mut result)?}
+                2 => { let _ = ioctl_uw_tdp2_max(fd, &mut result)?; }
                 _ => return Err(anyhow!("Invalid TDP index")),
             }
         }
