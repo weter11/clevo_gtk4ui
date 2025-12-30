@@ -175,56 +175,6 @@ impl ControlInterface {
     }
 }
 
-// Add to GUI for fan curve editor
-pub fn create_fan_curve_editor(
-    fan_id: u32,
-    current_curve: &FanCurve,
-    config: Rc<RefCell<Config>>,
-) -> gtk4::Box {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    
-    let title = gtk::Label::new(Some(&format!("Fan {} Curve", fan_id)));
-    title.add_css_class("title-3");
-    container.append(&title);
-    
-    // Add visual curve editor here
-    // Users can add/remove points
-    // Show temperature on X axis, speed on Y axis
-    
-    let points_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    
-    for (i, (temp, speed)) in current_curve.points.iter().enumerate() {
-        let point_row = adw::ActionRow::builder()
-            .title(&format!("Point {}", i + 1))
-            .build();
-        
-        let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
-        temp_spin.set_value(*temp as f64);
-        temp_spin.set_suffix(Some("°C"));
-        
-        let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
-        speed_spin.set_value(*speed as f64);
-        speed_spin.set_suffix(Some("%"));
-        
-        let remove_btn = gtk::Button::from_icon_name("user-trash-symbolic");
-        remove_btn.add_css_class("destructive-action");
-        
-        point_row.add_suffix(&temp_spin);
-        point_row.add_suffix(&speed_spin);
-        point_row.add_suffix(&remove_btn);
-        
-        points_list.append(&point_row);
-    }
-    
-    container.append(&points_list);
-    
-    let add_point_btn = gtk::Button::with_label("Add Point");
-    add_point_btn.add_css_class("suggested-action");
-    container.append(&add_point_btn);
-    
-    container
-}
-
 pub struct FanDaemon {
     settings: Option<FanSettings>,
     running: bool,
