@@ -535,7 +535,7 @@ pub fn get_current_tdp_profile() -> Result<String> {
     }
     
     let io = TuxedoIo::new()?;
-    let profile_id = io.get_available_profile()?;
+    let profile_id = io.get_available_profiles()?;
     let profiles = io.get_available_profiles()?;
     
     if (profile_id as usize) < profiles.len() {
