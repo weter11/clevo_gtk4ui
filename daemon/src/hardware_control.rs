@@ -233,9 +233,9 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     if !TuxedoIo::is_available() {
         return Err(anyhow!("TDP profiles not available"));
     }
-    
+
     let io = TuxedoIo::new()?;
-    let profiles = io.get_performance_profiles()?;
+    let profiles = io.get_available_profiles()?;
     
     if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
         io.set_performance_profile(profile_id as u32)?;
