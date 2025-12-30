@@ -162,9 +162,9 @@ impl TuxedoIo {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => ioctl_cl_faninfo1(fd, &mut result)?,
-                        1 => ioctl_cl_faninfo2(fd, &mut result)?,
-                        2 => ioctl_cl_faninfo3(fd, &mut result)?,
+                        0 => { let _ = ioctl_cl_faninfo1(fd, &mut result)?; }
+                        1 => { let _ = ioctl_cl_faninfo2(fd, &mut result)?; }
+                        2 => { let _ = ioctl_cl_faninfo3(fd, &mut result)?; }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -175,8 +175,8 @@ impl TuxedoIo {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => ioctl_uw_fanspeed(fd, &mut result)?,
-                        1 => ioctl_uw_fanspeed2(fd, &mut result)?,
+                        0 => { let _ = ioctl_uw_fanspeed(fd, &mut result)?; }
+                        1 => { let _ = ioctl_uw_fanspeed2(fd, &mut result)?; }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -212,8 +212,8 @@ impl TuxedoIo {
                 let speed_val = speed.min(200) as i32; // Uniwill uses 0-200 range
                 unsafe {
                     match fan_id {
-                        0 => ioctl_uw_fanspeed_w(fd, &speed_val)?,
-                        1 => ioctl_uw_fanspeed2_w(fd, &speed_val)?,
+                        0 => { let _ = ioctl_uw_fanspeed_w(fd, &speed_val)?; }
+                        1 => { let _ = ioctl_uw_fanspeed2_w(fd, &speed_val)?; }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -236,7 +236,7 @@ impl TuxedoIo {
             }
             HardwareInterface::Uniwill => {
                 unsafe {
-                    ioctl_uw_fanauto(fd)?;
+                    ioctl_uw_fanauto(fd, 1)?;
                 }
                 Ok(())
             }
@@ -253,9 +253,9 @@ impl TuxedoIo {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => ioctl_cl_faninfo1(fd, &mut result)?,
-                        1 => ioctl_cl_faninfo2(fd, &mut result)?,
-                        2 => ioctl_cl_faninfo3(fd, &mut result)?,
+                        0 => { let _ = ioctl_cl_faninfo1(fd, &mut result)?; }
+                        1 => { let _ = ioctl_cl_faninfo2(fd, &mut result)?; }
+                        2 => { let _ = ioctl_cl_faninfo3(fd, &mut result)?; }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -265,8 +265,8 @@ impl TuxedoIo {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => ioctl_uw_fan_temp(fd, &mut result)?,
-                        1 => ioctl_uw_fan_temp2(fd, &mut result)?,
+                        0 => { let _ = ioctl_uw_fan_temp(fd, &mut result)?; }
+                        1 => { let _ = ioctl_uw_fan_temp2(fd, &mut result)?; }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -341,9 +341,9 @@ impl TuxedoIo {
         
         unsafe {
             match tdp_index {
-                0 => ioctl_uw_tdp0(fd, &mut result)?,
-                1 => ioctl_uw_tdp1(fd, &mut result)?,
-                2 => ioctl_uw_tdp2(fd, &mut result)?,
+                0 => { let _ = ioctl_uw_tdp0(fd, &mut result)?; }
+                1 => { let _ = ioctl_uw_tdp1(fd, &mut result)?; }
+                2 => { let _ = ioctl_uw_tdp2(fd, &mut result)?; }
                 _ => return Err(anyhow!("Invalid TDP index")),
             }
         }
@@ -361,9 +361,9 @@ impl TuxedoIo {
         
         unsafe {
             match tdp_index {
-                0 => ioctl_uw_tdp0_min(fd, &mut result)?,
-                1 => ioctl_uw_tdp1_min(fd, &mut result)?,
-                2 => ioctl_uw_tdp2_min(fd, &mut result)?,
+                0 => { let _ = ioctl_uw_tdp0_min(fd, &mut result)?; }
+                1 => { let _ = ioctl_uw_tdp1_min(fd, &mut result)?; }
+                2 => { let _ = ioctl_uw_tdp2_min(fd, &mut result)?; }
                 _ => return Err(anyhow!("Invalid TDP index")),
             }
         }
@@ -381,9 +381,9 @@ impl TuxedoIo {
         
         unsafe {
             match tdp_index {
-                0 => ioctl_uw_tdp0_max(fd, &mut result)?,
-                1 => ioctl_uw_tdp1_max(fd, &mut result)?,
-                2 => ioctl_uw_tdp2_max(fd, &mut result)?,
+                0 => { let _ = ioctl_uw_tdp0_max(fd, &mut result)?; }
+                1 => { let _ = ioctl_uw_tdp1_max(fd, &mut result)?; }
+                2 => { let _ = ioctl_uw_tdp2_max(fd, &mut result)?}
                 _ => return Err(anyhow!("Invalid TDP index")),
             }
         }
@@ -400,9 +400,9 @@ impl TuxedoIo {
         
         unsafe {
             match tdp_index {
-                0 => ioctl_uw_tdp0_w(fd, &value)?,
-                1 => ioctl_uw_tdp1_w(fd, &value)?,
-                2 => ioctl_uw_tdp2_w(fd, &value)?,
+                0 => { let _ = ioctl_uw_tdp0_w(fd, &value)?; }
+                1 => { let _ = ioctl_uw_tdp1_w(fd, &value)?; }
+                2 => { let _ = ioctl_uw_tdp2_w(fd, &value)?; }
                 _ => return Err(anyhow!("Invalid TDP index")),
             }
         }
