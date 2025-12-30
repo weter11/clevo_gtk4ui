@@ -534,15 +534,15 @@ pub fn get_current_tdp_profile() -> Result<String> {
         return Err(anyhow!("TDP profiles not available"));
     }
     
-    let io = TuxedoIo::new()?;
-//    let profile_id = io.get_available_profiles()?;
-    let profiles = io.get_available_profiles()?;
-    
-    if (profile_id as usize) < profiles.len() {
-        Ok(profiles[profile_id as usize].clone())
-    } else {
-        Ok(format!("Profile {}", profile_id))
+    // Since there's no direct "get current profile" ioctl,
+    // we return a default message or the first profile
+    let profiles = get_tdp_profiles()?;
+    if profiles.is_empty() {
+        return Err(anyhow!("No TDP profiles available"));
     }
+    
+    // Return the first profile as default since we can't detect the current one
+    Ok(profiles[0].clone())
 }
 
 pub fn get_fan_speeds() -> Result<Vec<(u32, u32)>> {
