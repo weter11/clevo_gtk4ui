@@ -202,6 +202,44 @@ fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     Ok(())
 }
 
+// Preview keyboard settings without saving to profile (for real-time preview)
+pub fn preview_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
+    // Apply keyboard settings immediately, ignoring control_enabled flag
+    let base_path = find_keyboard_backlight_path()
+        .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
+    
+    use tuxedo_common::types::KeyboardMode;
+    match &settings.mode {
+        KeyboardMode::SingleColor { r, g, b, brightness } => {
+            let color_path = format!("{}/multi_intensity", base_path);
+            if Path::new(&color_path).exists() {
+                let color_str = format!("{} {} {}", r, g, b);
+                fs::write(&color_path, color_str)?;
+            }
+            
+            let brightness_path = format!("{}/brightness", base_path);
+            if Path::new(&brightness_path).exists() {
+                let max_brightness_path = format!("{}/max_brightness", base_path);
+                let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+                    max_str.trim().parse().unwrap_or(255)
+                } else {
+                    255
+                };
+                
+                let actual_brightness = ((*brightness as u32) * max_brightness) / 100;
+                fs::write(&brightness_path, actual_brightness.to_string())?;
+            }
+        }
+        _ => {
+            if let Ok(kbd) = RgbKeyboardControl::new() {
+                kbd.set_mode(&settings.mode)?;
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
     if settings.system_control {
         return Ok(());

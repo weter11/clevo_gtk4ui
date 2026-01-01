@@ -2,9 +2,13 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
+use std::sync::Mutex;
 use crate::tuxedo_io::TuxedoIo;
 // use tuxedo_io::TuxedoIo;
 use tuxedo_common::types::*;
+
+// Thread-safe storage for previous CPU stats
+static PREVIOUS_CPU_STATS: Mutex<Option<HashMap<u32, CpuStats>>> = Mutex::new(None);
 
 #[derive(Debug, Clone)]
 struct CpuStats {
@@ -57,26 +61,41 @@ fn read_cpu_stats() -> Result<HashMap<u32, CpuStats>> {
 }
 
 fn calculate_cpu_load() -> Result<HashMap<u32, f32>> {
-    let stats1 = read_cpu_stats()?;
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let stats2 = read_cpu_stats()?;
+    let current_stats = read_cpu_stats()?;
     
-    let mut loads = HashMap::new();
+    // Get previous stats from thread-safe storage
+    let mut prev_stats_lock = PREVIOUS_CPU_STATS.lock().unwrap();
     
-    for (cpu_id, stat2) in stats2.iter() {
-        if let Some(stat1) = stats1.get(cpu_id) {
-            let total_diff = stat2.total().saturating_sub(stat1.total());
-            let work_diff = stat2.work().saturating_sub(stat1.work());
-            
-            let load = if total_diff > 0 {
-                (work_diff as f32 / total_diff as f32) * 100.0
+    let loads = if let Some(ref prev_stats) = *prev_stats_lock {
+        // Calculate load based on delta from previous call
+        let mut loads = HashMap::new();
+        
+        for (cpu_id, current) in current_stats.iter() {
+            if let Some(prev) = prev_stats.get(cpu_id) {
+                let total_diff = current.total().saturating_sub(prev.total());
+                let work_diff = current.work().saturating_sub(prev.work());
+                
+                let load = if total_diff > 0 {
+                    (work_diff as f32 / total_diff as f32) * 100.0
+                } else {
+                    0.0
+                };
+                
+                loads.insert(*cpu_id, load);
             } else {
-                0.0
-            };
-            
-            loads.insert(*cpu_id, load);
+                // New CPU appeared, assume 0% load
+                loads.insert(*cpu_id, 0.0);
+            }
         }
-    }
+        
+        loads
+    } else {
+        // First call - no previous stats available, return 0% for all CPUs
+        current_stats.keys().map(|&id| (id, 0.0)).collect()
+    };
+    
+    // Store current stats for next call
+    *prev_stats_lock = Some(current_stats);
     
     Ok(loads)
 }
@@ -807,4 +826,192 @@ pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
     }
     
     Ok(gpus)
+}
+
+// WiFi information detection
+pub fn get_wifi_info() -> Result<Vec<WiFiInfo>> {
+    let mut wifi_devices = Vec::new();
+    
+    // Find WiFi network interfaces
+    let net_path = Path::new("/sys/class/net");
+    if !net_path.exists() {
+        return Err(anyhow!("Network interfaces not found"));
+    }
+    
+    for entry in fs::read_dir(net_path)? {
+        let entry = entry?;
+        let interface = entry.file_name().to_string_lossy().to_string();
+        
+        // Check if it's a wireless interface
+        let wireless_path = format!("/sys/class/net/{}/wireless", interface);
+        if !Path::new(&wireless_path).exists() {
+            continue;
+        }
+        
+        // Get driver name
+        let driver_path = format!("/sys/class/net/{}/device/driver/module", interface);
+        let driver = if let Ok(link) = fs::read_link(&driver_path) {
+            link.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        } else {
+            "unknown".to_string()
+        };
+        
+        // Read temperature if available
+        let temp_path = format!("/sys/class/net/{}/device/hwmon", interface);
+        let temperature = if let Ok(hwmon_entries) = fs::read_dir(&temp_path) {
+            let mut temp = None;
+            for hwmon_entry in hwmon_entries.flatten() {
+                let temp_input_path = hwmon_entry.path().join("temp1_input");
+                if let Ok(temp_str) = fs::read_to_string(&temp_input_path) {
+                    if let Ok(temp_millidegrees) = temp_str.trim().parse::<i32>() {
+                        temp = Some(temp_millidegrees as f32 / 1000.0);
+                        break;
+                    }
+                }
+            }
+            temp
+        } else {
+            None
+        };
+        
+        // Read signal level from /proc/net/wireless
+        let signal_level = read_wifi_signal(&interface);
+        
+        // Read channel and rates from iwconfig or iw
+        let (channel, channel_width) = read_wifi_channel(&interface);
+        let (tx_rate, rx_rate) = read_wifi_rates(&interface);
+        
+        wifi_devices.push(WiFiInfo {
+            interface,
+            driver,
+            temperature,
+            signal_level,
+            channel,
+            channel_width,
+            tx_rate,
+            rx_rate,
+        });
+    }
+    
+    if wifi_devices.is_empty() {
+        return Err(anyhow!("No WiFi devices found"));
+    }
+    
+    Ok(wifi_devices)
+}
+
+fn read_wifi_signal(interface: &str) -> Option<i32> {
+    // Read from /proc/net/wireless
+    // Format: Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
+    //  face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
+    if let Ok(wireless) = fs::read_to_string("/proc/net/wireless") {
+        for line in wireless.lines().skip(2) {
+            if line.contains(interface) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    // Signal level is typically in parts[3] (in dBm, negative value)
+                    if let Ok(signal) = parts[3].trim_end_matches('.').parse::<i32>() {
+                        return Some(signal);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_wifi_channel(interface: &str) -> (Option<u32>, Option<u32>) {
+    // Try to use iw command first (more modern)
+    if let Ok(output) = std::process::Command::new("iw")
+        .args(&["dev", interface, "info"])
+        .output()
+    {
+        if output.status.success() {
+            let info = String::from_utf8_lossy(&output.stdout);
+            let mut channel = None;
+            let mut width = None;
+            
+            for line in info.lines() {
+                if line.contains("channel") {
+                    // Parse: "channel 36 (5180 MHz), width: 80 MHz"
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    for (i, part) in parts.iter().enumerate() {
+                        if *part == "channel" && i + 1 < parts.len() {
+                            channel = parts[i + 1].parse().ok();
+                        }
+                        if *part == "width:" && i + 1 < parts.len() {
+                            width = parts[i + 1].trim_end_matches(',').parse().ok();
+                        }
+                    }
+                }
+            }
+            
+            return (channel, width);
+        }
+    }
+    
+    // Fallback to iwconfig (older tool)
+    if let Ok(output) = std::process::Command::new("iwconfig")
+        .arg(interface)
+        .output()
+    {
+        if output.status.success() {
+            let info = String::from_utf8_lossy(&output.stdout);
+            for line in info.lines() {
+                if line.contains("Channel") || line.contains("Frequency") {
+                    // Parse various formats
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    for (i, part) in parts.iter().enumerate() {
+                        if part.contains("Channel:") || part.contains("Channel=") {
+                            if let Some(ch_str) = part.split(&[':', '=']).nth(1) {
+                                if let Ok(ch) = ch_str.parse() {
+                                    return (Some(ch), None);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    (None, None)
+}
+
+fn read_wifi_rates(interface: &str) -> (Option<f64>, Option<f64>) {
+    // Try to read from /sys/class/net/{interface}/statistics/
+    let tx_bytes_path = format!("/sys/class/net/{}/statistics/tx_bytes", interface);
+    let rx_bytes_path = format!("/sys/class/net/{}/statistics/rx_bytes", interface);
+    
+    // Note: This gives total bytes, not rates. Actual rate calculation would require
+    // storing previous values and time, similar to CPU load calculation.
+    // For now, we'll try to use iw to get link speed
+    
+    if let Ok(output) = std::process::Command::new("iw")
+        .args(&["dev", interface, "link"])
+        .output()
+    {
+        if output.status.success() {
+            let info = String::from_utf8_lossy(&output.stdout);
+            for line in info.lines() {
+                if line.contains("tx bitrate:") {
+                    // Parse: "tx bitrate: 866.7 MBit/s"
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    for (i, part) in parts.iter().enumerate() {
+                        if (*part == "bitrate:" || *part == "tx" || *part == "rx") && i + 1 < parts.len() {
+                            if let Ok(rate) = parts[i + 1].parse::<f64>() {
+                                // Assume both tx and rx are similar for now
+                                return (Some(rate), Some(rate));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    (None, None)
 }

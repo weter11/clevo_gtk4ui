@@ -83,7 +83,7 @@ fn build_tuning_content(
         let cpu_section = create_cpu_tuning_section(&profile, config.clone(), dbus_client.clone(), cpu_info);
         main_box.append(&cpu_section);
         
-        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone());
+        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone(), dbus_client.clone());
         main_box.append(&keyboard_section);
         
         let screen_section = create_screen_tuning_section(&profile, config.clone());
@@ -427,7 +427,11 @@ fn create_cpu_tuning_section(
     group
 }
 
-fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+fn create_keyboard_tuning_section(
+    profile: &Profile,
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) -> adw::PreferencesGroup {
     use tuxedo_common::types::KeyboardMode;
     
     let group = adw::PreferencesGroup::builder()
@@ -484,6 +488,7 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
     
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
+    let dbus_clone = dbus_client.clone();
     mode_row.connect_selected_notify(move |row| {
         let mode_idx = row.selected();
         let mut cfg = config_clone.borrow_mut();
@@ -500,6 +505,11 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
                 7 => KeyboardMode::Wave { brightness: 50, speed: 50 },
                 _ => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
             };
+            
+            // REAL-TIME PREVIEW: Apply immediately via DBus
+            if let Some(client) = dbus_clone.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
+            }
         }
     });
     
@@ -508,30 +518,36 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
     // Add controls based on current mode
     match &profile.keyboard_settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Breathe { r, g, b, brightness, speed } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Flash { r, g, b, brightness, speed } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Cycle { brightness, speed } |
         KeyboardMode::Dance { brightness, speed } |
         KeyboardMode::RandomColor { brightness, speed } |
         KeyboardMode::Tempo { brightness, speed } |
         KeyboardMode::Wave { brightness, speed } => {
-            add_brightness_control(&group, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_brightness_control(&group, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
     }
     
     group
 }
 
-fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_rgb_controls(
+    group: &adw::PreferencesGroup,
+    r: u8, g: u8, b: u8, brightness: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let r_row = adw::ActionRow::builder().title("Red").build();
     let r_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
     r_scale.set_value(r as f64);
@@ -581,6 +597,7 @@ fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightne
         let g_s = g_clone.clone();
         let b_s = b_clone.clone();
         let br_s = bright_clone.clone();
+        let dbus_clone = dbus_client.clone();
         
         scale.connect_value_changed(move |_| {
             use tuxedo_common::types::KeyboardMode;
@@ -608,12 +625,23 @@ fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightne
                     }
                     _ => {}
                 }
+                
+                // REAL-TIME PREVIEW: Apply immediately via DBus
+                if let Some(client) = dbus_clone.borrow().as_ref() {
+                    let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
+                }
             }
         });
     }
 }
 
-fn add_brightness_control(group: &adw::PreferencesGroup, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_brightness_control(
+    group: &adw::PreferencesGroup,
+    brightness: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let bright_row = adw::ActionRow::builder().title("Brightness").build();
     let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     bright_scale.set_value(brightness as f64);
@@ -643,7 +671,13 @@ fn add_brightness_control(group: &adw::PreferencesGroup, brightness: u8, config:
     });
 }
 
-fn add_speed_control(group: &adw::PreferencesGroup, speed: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_speed_control(
+    group: &adw::PreferencesGroup,
+    speed: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let speed_row = adw::ActionRow::builder().title("Speed").build();
     let speed_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     speed_scale.set_value(speed as f64);
@@ -670,6 +704,11 @@ fn add_speed_control(group: &adw::PreferencesGroup, speed: u8, config: Rc<RefCel
                     *speed = speed_val;
                 }
                 _ => {}
+            }
+            
+            // REAL-TIME PREVIEW: Apply immediately via DBus
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
     });
@@ -723,12 +762,15 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
 }
 
 fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+    use tuxedo_common::types::FanCurve;
+    
     let group = adw::PreferencesGroup::builder()
         .title("Fans")
         .build();
     
     let control_row = adw::SwitchRow::builder()
         .title("Control fans")
+        .subtitle("Enable custom fan curves")
         .build();
     
     control_row.set_active(profile.fan_settings.control_enabled);
@@ -744,7 +786,157 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
     
     group.add(&control_row);
     
+    // Add fan curve editors for each fan
+    if profile.fan_settings.control_enabled {
+        // Get number of fans (default to 2 if curves don't exist)
+        let fan_count = if profile.fan_settings.curves.is_empty() {
+            2  // Default assumption
+        } else {
+            profile.fan_settings.curves.len().max(1)
+        };
+        
+        for fan_id in 0..fan_count {
+            let curve = profile.fan_settings.curves
+                .iter()
+                .find(|c| c.fan_id == fan_id as u32)
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Default curve: 0°C->0%, 50°C->50%, 80°C->100%
+                    FanCurve {
+                        fan_id: fan_id as u32,
+                        points: vec![(0, 0), (50, 50), (80, 100)],
+                    }
+                });
+            
+            let expander = adw::ExpanderRow::builder()
+                .title(&format!("Fan {} Curve", fan_id))
+                .subtitle(&format!("{} points", curve.points.len()))
+                .build();
+            
+            // Add point controls
+            for (i, (temp, speed)) in curve.points.iter().enumerate() {
+                let point_row = adw::ActionRow::builder()
+                    .title(&format!("Point {}", i + 1))
+                    .build();
+                
+                let temp_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let temp_label = gtk::Label::new(Some("Temp:"));
+                let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                temp_spin.set_value(*temp as f64);
+                temp_spin.set_suffix(Some("°C"));
+                temp_spin.set_width_chars(5);
+                temp_box.append(&temp_label);
+                temp_box.append(&temp_spin);
+                
+                let speed_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let speed_label = gtk::Label::new(Some("Speed:"));
+                let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                speed_spin.set_value(*speed as f64);
+                speed_spin.set_suffix(Some("%"));
+                speed_spin.set_width_chars(5);
+                speed_box.append(&speed_label);
+                speed_box.append(&speed_spin);
+                
+                point_row.add_suffix(&temp_box);
+                point_row.add_suffix(&speed_box);
+                
+                // Update curve on value change
+                let config_clone = config.clone();
+                let profile_name_clone = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                
+                let speed_spin_clone = speed_spin.clone();
+                temp_spin.connect_value_changed(move |temp_spin| {
+                    let temp_val = temp_spin.value() as u8;
+                    let speed_val = speed_spin_clone.value() as u8;
+                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                let temp_spin_clone = temp_spin.clone();
+                speed_spin.connect_value_changed(move |speed_spin| {
+                    let temp_val = temp_spin_clone.value() as u8;
+                    let speed_val = speed_spin.value() as u8;
+                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                expander.add_row(&point_row);
+            }
+            
+            // Add button to add new point
+            let add_point_row = adw::ActionRow::builder()
+                .title("Add Point")
+                .build();
+            
+            let add_button = Button::with_label("➕ Add");
+            add_button.add_css_class("suggested-action");
+            add_button.set_valign(gtk::Align::Center);
+            
+            let config_clone = config.clone();
+            let profile_name_clone = profile.name.clone();
+            let fan_id_copy = fan_id as u32;
+            add_button.connect_clicked(move |_| {
+                add_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy);
+            });
+            
+            add_point_row.add_suffix(&add_button);
+            expander.add_row(&add_point_row);
+            
+            group.add(&expander);
+        }
+    }
+    
     group
+}
+
+fn update_fan_curve_point(
+    config: &Rc<RefCell<Config>>,
+    profile_name: &str,
+    fan_id: u32,
+    point_idx: usize,
+    temp: u8,
+    speed: u8,
+) {
+    let mut cfg = config.borrow_mut();
+    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+        // Find or create the fan curve
+        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
+            if point_idx < curve.points.len() {
+                curve.points[point_idx] = (temp, speed);
+            }
+        } else {
+            // Create new curve if it doesn't exist
+            prof.fan_settings.curves.push(FanCurve {
+                fan_id,
+                points: vec![(temp, speed)],
+            });
+        }
+    }
+}
+
+fn add_fan_curve_point(
+    config: &Rc<RefCell<Config>>,
+    profile_name: &str,
+    fan_id: u32,
+) {
+    let mut cfg = config.borrow_mut();
+    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
+            // Add a new point with reasonable defaults
+            let new_temp = if let Some((last_temp, _)) = curve.points.last() {
+                (*last_temp + 10).min(100)
+            } else {
+                50
+            };
+            curve.points.push((new_temp, 50));
+        } else {
+            // Create new curve with one point
+            prof.fan_settings.curves.push(FanCurve {
+                fan_id,
+                points: vec![(50, 50)],
+            });
+        }
+    }
 }
 
 // Add to GUI for fan curve editor

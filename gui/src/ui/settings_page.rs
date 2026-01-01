@@ -142,6 +142,20 @@ pub fn create_page(config: Rc<RefCell<Config>>) -> ScrolledWindow {
     });
     
     daemon_group.add(&app_monitoring_row);
+    
+    let auto_switch_row = adw::SwitchRow::builder()
+        .title("Automatic profile switching")
+        .subtitle("Switch profiles based on running applications")
+        .build();
+    auto_switch_row.set_active(config.borrow().data.auto_profile_switching);
+    
+    let config_clone = config.clone();
+    auto_switch_row.connect_active_notify(move |row| {
+        config_clone.borrow_mut().data.auto_profile_switching = row.is_active();
+        let _ = config_clone.borrow().save();
+    });
+    
+    daemon_group.add(&auto_switch_row);
     main_box.append(&daemon_group);
     
     // CPU Scheduler Group (Global setting)

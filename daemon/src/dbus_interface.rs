@@ -217,6 +217,14 @@ async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
             Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
         }
     }
+    
+    // Keyboard preview - apply keyboard settings immediately without saving to profile
+    async fn preview_keyboard_settings(&self, settings_json: &str) -> Result<(), zbus::fdo::Error> {
+        let settings: KeyboardSettings = serde_json::from_str(settings_json)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        crate::hardware_control::preview_keyboard_settings(&settings)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
 }
 
 pub async fn start_service(_connection: Connection) -> Result<()> {

@@ -59,10 +59,11 @@ impl TuxedoWindow {
         
         window.set_content(Some(&main_box));
         
-        // Handle close button
-        window.connect_close_request(|window| {
-            window.set_visible(false);
-            gtk::glib::Propagation::Stop
+        // Handle close button - clean exit
+        window.connect_close_request(|_window| {
+            // The daemon will continue running independently
+            // GUI closes cleanly
+            gtk::glib::Propagation::Proceed  // Allow window to close
         });
         
         Self { window }
