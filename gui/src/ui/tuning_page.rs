@@ -83,7 +83,7 @@ fn build_tuning_content(
         let cpu_section = create_cpu_tuning_section(&profile, config.clone(), dbus_client.clone(), cpu_info);
         main_box.append(&cpu_section);
         
-        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone());
+        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone(), dbus_client.clone());
         main_box.append(&keyboard_section);
         
         let screen_section = create_screen_tuning_section(&profile, config.clone());
@@ -427,7 +427,11 @@ fn create_cpu_tuning_section(
     group
 }
 
-fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+fn create_keyboard_tuning_section(
+    profile: &Profile,
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) -> adw::PreferencesGroup {
     use tuxedo_common::types::KeyboardMode;
     
     let group = adw::PreferencesGroup::builder()
@@ -484,6 +488,7 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
     
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
+    let dbus_clone = dbus_client.clone();
     mode_row.connect_selected_notify(move |row| {
         let mode_idx = row.selected();
         let mut cfg = config_clone.borrow_mut();
@@ -500,6 +505,11 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
                 7 => KeyboardMode::Wave { brightness: 50, speed: 50 },
                 _ => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
             };
+            
+            // REAL-TIME PREVIEW: Apply immediately via DBus
+            if let Some(client) = dbus_clone.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
+            }
         }
     });
     
@@ -508,30 +518,36 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
     // Add controls based on current mode
     match &profile.keyboard_settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Breathe { r, g, b, brightness, speed } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Flash { r, g, b, brightness, speed } => {
-            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
         KeyboardMode::Cycle { brightness, speed } |
         KeyboardMode::Dance { brightness, speed } |
         KeyboardMode::RandomColor { brightness, speed } |
         KeyboardMode::Tempo { brightness, speed } |
         KeyboardMode::Wave { brightness, speed } => {
-            add_brightness_control(&group, *brightness, config.clone(), profile.name.clone());
-            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+            add_brightness_control(&group, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone(), dbus_client.clone());
         }
     }
     
     group
 }
 
-fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_rgb_controls(
+    group: &adw::PreferencesGroup,
+    r: u8, g: u8, b: u8, brightness: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let r_row = adw::ActionRow::builder().title("Red").build();
     let r_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
     r_scale.set_value(r as f64);
@@ -581,6 +597,7 @@ fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightne
         let g_s = g_clone.clone();
         let b_s = b_clone.clone();
         let br_s = bright_clone.clone();
+        let dbus_clone = dbus_client.clone();
         
         scale.connect_value_changed(move |_| {
             use tuxedo_common::types::KeyboardMode;
@@ -608,12 +625,23 @@ fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightne
                     }
                     _ => {}
                 }
+                
+                // REAL-TIME PREVIEW: Apply immediately via DBus
+                if let Some(client) = dbus_clone.borrow().as_ref() {
+                    let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
+                }
             }
         });
     }
 }
 
-fn add_brightness_control(group: &adw::PreferencesGroup, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_brightness_control(
+    group: &adw::PreferencesGroup,
+    brightness: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let bright_row = adw::ActionRow::builder().title("Brightness").build();
     let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     bright_scale.set_value(brightness as f64);
@@ -643,7 +671,13 @@ fn add_brightness_control(group: &adw::PreferencesGroup, brightness: u8, config:
     });
 }
 
-fn add_speed_control(group: &adw::PreferencesGroup, speed: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+fn add_speed_control(
+    group: &adw::PreferencesGroup,
+    speed: u8,
+    config: Rc<RefCell<Config>>,
+    profile_name: String,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) {
     let speed_row = adw::ActionRow::builder().title("Speed").build();
     let speed_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     speed_scale.set_value(speed as f64);
@@ -670,6 +704,11 @@ fn add_speed_control(group: &adw::PreferencesGroup, speed: u8, config: Rc<RefCel
                     *speed = speed_val;
                 }
                 _ => {}
+            }
+            
+            // REAL-TIME PREVIEW: Apply immediately via DBus
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
     });

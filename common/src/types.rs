@@ -201,6 +201,7 @@ pub struct AppConfig {
     pub autostart: bool,
     pub fan_daemon_enabled: bool,
     pub app_monitoring_enabled: bool,
+    pub auto_profile_switching: bool,  // Automatic profile switching based on running applications
     pub cpu_scheduler: String,
     pub statistics_sections: StatisticsSections,
     pub tuning_section_order: Vec<String>,
@@ -243,6 +244,7 @@ impl Default for AppConfig {
             autostart: false,
             fan_daemon_enabled: true,
             app_monitoring_enabled: true,
+            auto_profile_switching: false,  // Default: disabled
             cpu_scheduler: "CFS".to_string(),
             statistics_sections: StatisticsSections::default(),
             tuning_section_order: vec![

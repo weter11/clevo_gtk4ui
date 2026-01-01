@@ -374,4 +374,19 @@ pub fn set_energy_performance_preference(&self, epp: &str) -> Result<()> {
         let json: String = proxy.call("GetBatteryAvailableEndThresholds", &())?;
         Ok(serde_json::from_str(&json)?)
     }
+    
+    // Preview keyboard settings in real-time without saving
+    pub fn preview_keyboard_settings(&self, settings: &KeyboardSettings) -> Result<()> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        let json = serde_json::to_string(settings)?;
+        proxy.call::<_, _, ()>("PreviewKeyboardSettings", &(json.as_str(),))?;
+        Ok(())
+    }
 }
