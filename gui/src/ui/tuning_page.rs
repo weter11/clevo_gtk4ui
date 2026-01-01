@@ -428,6 +428,8 @@ fn create_cpu_tuning_section(
 }
 
 fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+    use tuxedo_common::types::KeyboardMode;
+    
     let group = adw::PreferencesGroup::builder()
         .title("Keyboard Backlight")
         .build();
@@ -449,86 +451,228 @@ fn create_keyboard_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>
     
     group.add(&control_row);
     
-    if let tuxedo_common::types::KeyboardMode::SingleColor { r, g, b, brightness } = profile.keyboard_settings.mode {
-        let r_row = adw::ActionRow::builder()
-            .title("Red")
-            .build();
-        let r_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
-        r_scale.set_value(r as f64);
-        r_scale.set_hexpand(true);
-        r_scale.set_draw_value(true);
-        r_scale.set_value_pos(gtk::PositionType::Right);
-        r_row.add_suffix(&r_scale);
-        group.add(&r_row);
-        
-        let g_row = adw::ActionRow::builder()
-            .title("Green")
-            .build();
-        let g_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
-        g_scale.set_value(g as f64);
-        g_scale.set_hexpand(true);
-        g_scale.set_draw_value(true);
-        g_scale.set_value_pos(gtk::PositionType::Right);
-        g_row.add_suffix(&g_scale);
-        group.add(&g_row);
-        
-        let b_row = adw::ActionRow::builder()
-            .title("Blue")
-            .build();
-        let b_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
-        b_scale.set_value(b as f64);
-        b_scale.set_hexpand(true);
-        b_scale.set_draw_value(true);
-        b_scale.set_value_pos(gtk::PositionType::Right);
-        b_row.add_suffix(&b_scale);
-        group.add(&b_row);
-        
-        let bright_row = adw::ActionRow::builder()
-            .title("Brightness")
-            .build();
-        let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
-        bright_scale.set_value(brightness as f64);
-        bright_scale.set_hexpand(true);
-        bright_scale.set_draw_value(true);
-        bright_scale.set_value_pos(gtk::PositionType::Right);
-        bright_row.add_suffix(&bright_scale);
-        group.add(&bright_row);
-        
-        let config_clone = config.clone();
-        let profile_name = profile.name.clone();
-        let r_clone = r_scale.clone();
-        let g_clone = g_scale.clone();
-        let b_clone = b_scale.clone();
-        let bright_clone = bright_scale.clone();
-        
-        for scale in [&r_scale, &g_scale, &b_scale, &bright_scale] {
-            let cfg = config_clone.clone();
-            let pname = profile_name.clone();
-            let r_s = r_clone.clone();
-            let g_s = g_clone.clone();
-            let b_s = b_clone.clone();
-            let br_s = bright_clone.clone();
-            
-            scale.connect_value_changed(move |_| {
-                let r_val = r_s.value() as u8;
-                let g_val = g_s.value() as u8;
-                let b_val = b_s.value() as u8;
-                let br_val = br_s.value() as u8;
-                
-                let mut config = cfg.borrow_mut();
-                if let Some(prof) = config.data.profiles.iter_mut().find(|p| p.name == pname) {
-                    prof.keyboard_settings.mode = tuxedo_common::types::KeyboardMode::SingleColor {
-                        r: r_val,
-                        g: g_val,
-                        b: b_val,
-                        brightness: br_val,
-                    };
-                }
-            });
+    // Mode selector
+    let mode_row = adw::ComboRow::builder()
+        .title("Backlight Mode")
+        .build();
+    
+    let modes = vec![
+        "Single Color",
+        "Breathe",
+        "Cycle", 
+        "Dance",
+        "Flash",
+        "Random Color",
+        "Tempo",
+        "Wave",
+    ];
+    let model = gtk::StringList::new(&modes.iter().map(|s| *s).collect::<Vec<_>>());
+    mode_row.set_model(Some(&model));
+    
+    // Set current mode
+    let current_mode_idx = match &profile.keyboard_settings.mode {
+        KeyboardMode::SingleColor { .. } => 0,
+        KeyboardMode::Breathe { .. } => 1,
+        KeyboardMode::Cycle { .. } => 2,
+        KeyboardMode::Dance { .. } => 3,
+        KeyboardMode::Flash { .. } => 4,
+        KeyboardMode::RandomColor { .. } => 5,
+        KeyboardMode::Tempo { .. } => 6,
+        KeyboardMode::Wave { .. } => 7,
+    };
+    mode_row.set_selected(current_mode_idx);
+    
+    let config_clone = config.clone();
+    let profile_name = profile.name.clone();
+    mode_row.connect_selected_notify(move |row| {
+        let mode_idx = row.selected();
+        let mut cfg = config_clone.borrow_mut();
+        if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+            // Update mode - keep existing values where possible
+            prof.keyboard_settings.mode = match mode_idx {
+                0 => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
+                1 => KeyboardMode::Breathe { r: 255, g: 255, b: 255, brightness: 50, speed: 50 },
+                2 => KeyboardMode::Cycle { brightness: 50, speed: 50 },
+                3 => KeyboardMode::Dance { brightness: 50, speed: 50 },
+                4 => KeyboardMode::Flash { r: 255, g: 255, b: 255, brightness: 50, speed: 50 },
+                5 => KeyboardMode::RandomColor { brightness: 50, speed: 50 },
+                6 => KeyboardMode::Tempo { brightness: 50, speed: 50 },
+                7 => KeyboardMode::Wave { brightness: 50, speed: 50 },
+                _ => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
+            };
+        }
+    });
+    
+    group.add(&mode_row);
+    
+    // Add controls based on current mode
+    match &profile.keyboard_settings.mode {
+        KeyboardMode::SingleColor { r, g, b, brightness } => {
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
+        }
+        KeyboardMode::Breathe { r, g, b, brightness, speed } => {
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+        }
+        KeyboardMode::Flash { r, g, b, brightness, speed } => {
+            add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
+        }
+        KeyboardMode::Cycle { brightness, speed } |
+        KeyboardMode::Dance { brightness, speed } |
+        KeyboardMode::RandomColor { brightness, speed } |
+        KeyboardMode::Tempo { brightness, speed } |
+        KeyboardMode::Wave { brightness, speed } => {
+            add_brightness_control(&group, *brightness, config.clone(), profile.name.clone());
+            add_speed_control(&group, *speed, config.clone(), profile.name.clone());
         }
     }
     
     group
+}
+
+fn add_rgb_controls(group: &adw::PreferencesGroup, r: u8, g: u8, b: u8, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+    let r_row = adw::ActionRow::builder().title("Red").build();
+    let r_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
+    r_scale.set_value(r as f64);
+    r_scale.set_hexpand(true);
+    r_scale.set_draw_value(true);
+    r_scale.set_value_pos(gtk::PositionType::Right);
+    r_row.add_suffix(&r_scale);
+    group.add(&r_row);
+    
+    let g_row = adw::ActionRow::builder().title("Green").build();
+    let g_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
+    g_scale.set_value(g as f64);
+    g_scale.set_hexpand(true);
+    g_scale.set_draw_value(true);
+    g_scale.set_value_pos(gtk::PositionType::Right);
+    g_row.add_suffix(&g_scale);
+    group.add(&g_row);
+    
+    let b_row = adw::ActionRow::builder().title("Blue").build();
+    let b_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 255.0, 1.0);
+    b_scale.set_value(b as f64);
+    b_scale.set_hexpand(true);
+    b_scale.set_draw_value(true);
+    b_scale.set_value_pos(gtk::PositionType::Right);
+    b_row.add_suffix(&b_scale);
+    group.add(&b_row);
+    
+    let bright_row = adw::ActionRow::builder().title("Brightness").build();
+    let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+    bright_scale.set_value(brightness as f64);
+    bright_scale.set_hexpand(true);
+    bright_scale.set_draw_value(true);
+    bright_scale.set_value_pos(gtk::PositionType::Right);
+    bright_row.add_suffix(&bright_scale);
+    group.add(&bright_row);
+    
+    // Connect value changed handlers
+    let r_clone = r_scale.clone();
+    let g_clone = g_scale.clone();
+    let b_clone = b_scale.clone();
+    let bright_clone = bright_scale.clone();
+    
+    for scale in [&r_scale, &g_scale, &b_scale, &bright_scale] {
+        let cfg = config.clone();
+        let pname = profile_name.clone();
+        let r_s = r_clone.clone();
+        let g_s = g_clone.clone();
+        let b_s = b_clone.clone();
+        let br_s = bright_clone.clone();
+        
+        scale.connect_value_changed(move |_| {
+            use tuxedo_common::types::KeyboardMode;
+            let r_val = r_s.value() as u8;
+            let g_val = g_s.value() as u8;
+            let b_val = b_s.value() as u8;
+            let br_val = br_s.value() as u8;
+            
+            let mut config = cfg.borrow_mut();
+            if let Some(prof) = config.data.profiles.iter_mut().find(|p| p.name == pname) {
+                // Update the RGB values in the current mode
+                match &mut prof.keyboard_settings.mode {
+                    KeyboardMode::SingleColor { r, g, b, brightness } => {
+                        *r = r_val;
+                        *g = g_val;
+                        *b = b_val;
+                        *brightness = br_val;
+                    }
+                    KeyboardMode::Breathe { r, g, b, brightness, .. } |
+                    KeyboardMode::Flash { r, g, b, brightness, .. } => {
+                        *r = r_val;
+                        *g = g_val;
+                        *b = b_val;
+                        *brightness = br_val;
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+}
+
+fn add_brightness_control(group: &adw::PreferencesGroup, brightness: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+    let bright_row = adw::ActionRow::builder().title("Brightness").build();
+    let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+    bright_scale.set_value(brightness as f64);
+    bright_scale.set_hexpand(true);
+    bright_scale.set_draw_value(true);
+    bright_scale.set_value_pos(gtk::PositionType::Right);
+    bright_row.add_suffix(&bright_scale);
+    group.add(&bright_row);
+    
+    bright_scale.connect_value_changed(move |scale| {
+        use tuxedo_common::types::KeyboardMode;
+        let br_val = scale.value() as u8;
+        
+        let mut cfg = config.borrow_mut();
+        if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+            match &mut prof.keyboard_settings.mode {
+                KeyboardMode::Cycle { brightness, .. } |
+                KeyboardMode::Dance { brightness, .. } |
+                KeyboardMode::RandomColor { brightness, .. } |
+                KeyboardMode::Tempo { brightness, .. } |
+                KeyboardMode::Wave { brightness, .. } => {
+                    *brightness = br_val;
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+fn add_speed_control(group: &adw::PreferencesGroup, speed: u8, config: Rc<RefCell<Config>>, profile_name: String) {
+    let speed_row = adw::ActionRow::builder().title("Speed").build();
+    let speed_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
+    speed_scale.set_value(speed as f64);
+    speed_scale.set_hexpand(true);
+    speed_scale.set_draw_value(true);
+    speed_scale.set_value_pos(gtk::PositionType::Right);
+    speed_row.add_suffix(&speed_scale);
+    group.add(&speed_row);
+    
+    speed_scale.connect_value_changed(move |scale| {
+        use tuxedo_common::types::KeyboardMode;
+        let speed_val = scale.value() as u8;
+        
+        let mut cfg = config.borrow_mut();
+        if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+            match &mut prof.keyboard_settings.mode {
+                KeyboardMode::Breathe { speed, .. } |
+                KeyboardMode::Cycle { speed, .. } |
+                KeyboardMode::Dance { speed, .. } |
+                KeyboardMode::Flash { speed, .. } |
+                KeyboardMode::RandomColor { speed, .. } |
+                KeyboardMode::Tempo { speed, .. } |
+                KeyboardMode::Wave { speed, .. } => {
+                    *speed = speed_val;
+                }
+                _ => {}
+            }
+        }
+    });
 }
 
 fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {

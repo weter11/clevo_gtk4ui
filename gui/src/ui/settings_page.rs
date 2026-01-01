@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{Box, Orientation, ScrolledWindow};
+use gtk::{Box, Orientation, ScrolledWindow, Scale};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -264,6 +264,161 @@ pub fn create_page(config: Rc<RefCell<Config>>) -> ScrolledWindow {
     
     stats_layout_group.add(&show_fans_row);
     main_box.append(&stats_layout_group);
+    
+    // Statistics Polling Rates Group
+    let polling_group = adw::PreferencesGroup::builder()
+        .title("Statistics Polling Rates")
+        .description("How often to update each statistics section (in seconds)")
+        .build();
+    
+    // System info polling
+    let system_poll_row = adw::ActionRow::builder()
+        .title("System Info Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.system_info_poll_rate / 1000))
+        .build();
+    let system_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 10.0, 300.0, 10.0);
+    system_poll_scale.set_value((config.borrow().data.statistics_sections.system_info_poll_rate / 1000) as f64);
+    system_poll_scale.set_hexpand(true);
+    system_poll_scale.set_draw_value(false);
+    system_poll_row.add_suffix(&system_poll_scale);
+    let config_clone = config.clone();
+    system_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.system_info_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&system_poll_row);
+    
+    // CPU polling
+    let cpu_poll_row = adw::ActionRow::builder()
+        .title("CPU Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.cpu_poll_rate / 1000))
+        .build();
+    let cpu_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 1.0, 10.0, 1.0);
+    cpu_poll_scale.set_value((config.borrow().data.statistics_sections.cpu_poll_rate / 1000) as f64);
+    cpu_poll_scale.set_hexpand(true);
+    cpu_poll_scale.set_draw_value(false);
+    cpu_poll_row.add_suffix(&cpu_poll_scale);
+    let config_clone = config.clone();
+    cpu_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.cpu_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&cpu_poll_row);
+    
+    // GPU polling
+    let gpu_poll_row = adw::ActionRow::builder()
+        .title("GPU Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.gpu_poll_rate / 1000))
+        .build();
+    let gpu_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 1.0, 10.0, 1.0);
+    gpu_poll_scale.set_value((config.borrow().data.statistics_sections.gpu_poll_rate / 1000) as f64);
+    gpu_poll_scale.set_hexpand(true);
+    gpu_poll_scale.set_draw_value(false);
+    gpu_poll_row.add_suffix(&gpu_poll_scale);
+    let config_clone = config.clone();
+    gpu_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.gpu_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&gpu_poll_row);
+    
+    // Battery polling
+    let battery_poll_row = adw::ActionRow::builder()
+        .title("Battery Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.battery_poll_rate / 1000))
+        .build();
+    let battery_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 1.0, 30.0, 1.0);
+    battery_poll_scale.set_value((config.borrow().data.statistics_sections.battery_poll_rate / 1000) as f64);
+    battery_poll_scale.set_hexpand(true);
+    battery_poll_scale.set_draw_value(false);
+    battery_poll_row.add_suffix(&battery_poll_scale);
+    let config_clone = config.clone();
+    battery_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.battery_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&battery_poll_row);
+    
+    // WiFi polling
+    let wifi_poll_row = adw::ActionRow::builder()
+        .title("WiFi Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.wifi_poll_rate / 1000))
+        .build();
+    let wifi_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 1.0, 30.0, 1.0);
+    wifi_poll_scale.set_value((config.borrow().data.statistics_sections.wifi_poll_rate / 1000) as f64);
+    wifi_poll_scale.set_hexpand(true);
+    wifi_poll_scale.set_draw_value(false);
+    wifi_poll_row.add_suffix(&wifi_poll_scale);
+    let config_clone = config.clone();
+    wifi_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.wifi_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&wifi_poll_row);
+    
+    // Storage polling
+    let storage_poll_row = adw::ActionRow::builder()
+        .title("Storage Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.storage_poll_rate / 1000))
+        .build();
+    let storage_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 10.0, 300.0, 10.0);
+    storage_poll_scale.set_value((config.borrow().data.statistics_sections.storage_poll_rate / 1000) as f64);
+    storage_poll_scale.set_hexpand(true);
+    storage_poll_scale.set_draw_value(false);
+    storage_poll_row.add_suffix(&storage_poll_scale);
+    let config_clone = config.clone();
+    storage_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.storage_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&storage_poll_row);
+    
+    // Fans polling
+    let fans_poll_row = adw::ActionRow::builder()
+        .title("Fans Polling")
+        .subtitle(&format!("{} seconds", config.borrow().data.statistics_sections.fans_poll_rate / 1000))
+        .build();
+    let fans_poll_scale = Scale::with_range(gtk::Orientation::Horizontal, 1.0, 10.0, 1.0);
+    fans_poll_scale.set_value((config.borrow().data.statistics_sections.fans_poll_rate / 1000) as f64);
+    fans_poll_scale.set_hexpand(true);
+    fans_poll_scale.set_draw_value(false);
+    fans_poll_row.add_suffix(&fans_poll_scale);
+    let config_clone = config.clone();
+    fans_poll_scale.connect_value_changed(move |scale| {
+        let val = (scale.value() as u64) * 1000;
+        config_clone.borrow_mut().data.statistics_sections.fans_poll_rate = val;
+        let _ = config_clone.borrow().save();
+        if let Some(row) = scale.parent().and_then(|p| p.downcast::<adw::ActionRow>().ok()) {
+            row.set_subtitle(&format!("{} seconds", val / 1000));
+        }
+    });
+    polling_group.add(&fans_poll_row);
+    
+    main_box.append(&polling_group);
     
     scrolled.set_child(Some(&main_box));
     scrolled
