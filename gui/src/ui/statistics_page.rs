@@ -4,6 +4,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 use gtk::glib;
 
 use crate::config::Config;
@@ -25,18 +26,24 @@ pub fn create_page(
     main_box.set_margin_start(24);
     main_box.set_margin_end(24);
     
-    let mut widgets = Vec::new();
+    // Create sections with background polling
     
     if config.borrow().data.statistics_sections.show_system_info {
         let (group, refs) = create_system_info_section();
         main_box.append(&group);
-        widgets.push(("system", refs));
+        
+        let dbus_clone = dbus_client.clone();
+        let poll_rate = config.borrow().data.statistics_sections.system_info_poll_rate;
+        start_background_poll_system(refs, dbus_clone, poll_rate);
     }
     
     if config.borrow().data.statistics_sections.show_cpu {
         let (group, refs) = create_cpu_section();
         main_box.append(&group);
-        widgets.push(("cpu", refs));
+        
+        let dbus_clone = dbus_client.clone();
+        let poll_rate = config.borrow().data.statistics_sections.cpu_poll_rate;
+        start_background_poll_cpu(refs, dbus_clone, poll_rate);
     }
     
     if config.borrow().data.statistics_sections.show_gpu {
@@ -47,7 +54,9 @@ pub fn create_page(
     if config.borrow().data.statistics_sections.show_battery {
         let (group, refs) = create_battery_section();
         main_box.append(&group);
-        widgets.push(("battery", refs));
+        
+        let poll_rate = config.borrow().data.statistics_sections.battery_poll_rate;
+        start_background_poll_battery(refs, poll_rate);
     }
     
     if config.borrow().data.statistics_sections.show_wifi {
@@ -63,33 +72,107 @@ pub fn create_page(
     if config.borrow().data.statistics_sections.show_fans {
         let (group, refs) = create_fans_section();
         main_box.append(&group);
-        widgets.push(("fans", refs));
+        
+        let dbus_clone = dbus_client.clone();
+        let poll_rate = config.borrow().data.statistics_sections.fans_poll_rate;
+        start_background_poll_fans(refs, dbus_clone, poll_rate);
     }
     
     scrolled.set_child(Some(&main_box));
-    
-    let dbus_clone = dbus_client.clone();
-    glib::timeout_add_seconds_local(2, move || {
-        update_statistics(&widgets, dbus_clone.clone());
-        glib::ControlFlow::Continue
-    });
-    
     scrolled
 }
 
-type WidgetRefs = Vec<(String, adw::ActionRow)>;
-
-fn update_statistics(widgets: &[((&str, WidgetRefs))], dbus_client: Rc<RefCell<Option<DbusClient>>>) {
-    for (section_type, refs) in widgets {
-        match *section_type {
-            "system" => update_system_info(refs, dbus_client.clone()),
-            "cpu" => update_cpu_info(refs, dbus_client.clone()),
-            "battery" => update_battery_info(refs),
-            "fans" => update_fans_info(refs, dbus_client.clone()),
-            _ => {}
+// Background polling for CPU info
+fn start_background_poll_cpu(
+    refs: WidgetRefs,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    poll_rate_ms: u64,
+) {
+    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
+    
+    // Background thread for polling
+    std::thread::spawn(move || {
+        loop {
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                if let Ok(cpu_info) = client.get_cpu_info() {
+                    let _ = sender.send(cpu_info);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(poll_rate_ms));
         }
-    }
+    });
+    
+    // UI update on main thread
+    receiver.attach(None, move |cpu_info| {
+        update_cpu_info_with_data(&refs, cpu_info);
+        glib::ControlFlow::Continue
+    });
 }
+
+// Background polling for system info
+fn start_background_poll_system(
+    refs: WidgetRefs,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    poll_rate_ms: u64,
+) {
+    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
+    
+    std::thread::spawn(move || {
+        loop {
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                if let Ok(system_info) = client.get_system_info() {
+                    let _ = sender.send(system_info);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(poll_rate_ms));
+        }
+    });
+    
+    receiver.attach(None, move |system_info| {
+        update_system_info_with_data(&refs, system_info);
+        glib::ControlFlow::Continue
+    });
+}
+
+// Background polling for battery info
+fn start_background_poll_battery(
+    refs: WidgetRefs,
+    poll_rate_ms: u64,
+) {
+    // Battery info is read from sysfs directly in the UI process, no DBus needed
+    glib::timeout_add_seconds_local((poll_rate_ms / 1000).max(1) as u32, move || {
+        update_battery_info(&refs);
+        glib::ControlFlow::Continue
+    });
+}
+
+// Background polling for fans info
+fn start_background_poll_fans(
+    refs: WidgetRefs,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    poll_rate_ms: u64,
+) {
+    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
+    
+    std::thread::spawn(move || {
+        loop {
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                if let Ok(fans) = client.get_fan_speeds() {
+                    let _ = sender.send(fans);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(poll_rate_ms));
+        }
+    });
+    
+    receiver.attach(None, move |_fans| {
+        // Update fans UI here
+        // update_fans_info_with_data(&refs, fans);
+        glib::ControlFlow::Continue
+    });
+}
+
+type WidgetRefs = Vec<(String, adw::ActionRow)>;
 
 fn create_system_info_section() -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
@@ -127,20 +210,24 @@ fn create_system_info_section() -> (adw::PreferencesGroup, WidgetRefs) {
 fn update_system_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>>>) {
     if let Some(client) = dbus_client.borrow().as_ref() {
         if let Ok(info) = client.get_system_info() {
-            for (key, row) in refs {
-                match key.as_str() {
-                    "model" => {
-                        row.set_subtitle(&info.product_name);
-                    }
-                    "manufacturer" => {
-                        row.set_subtitle(&info.manufacturer);
-                    }
-                    "bios" => {
-                        row.set_subtitle(&info.bios_version);
-                    }
-                    _ => {}
-                }
+            update_system_info_with_data(refs, info);
+        }
+    }
+}
+
+fn update_system_info_with_data(refs: &WidgetRefs, info: tuxedo_common::types::SystemInfo) {
+    for (key, row) in refs {
+        match key.as_str() {
+            "model" => {
+                row.set_subtitle(&info.product_name);
             }
+            "manufacturer" => {
+                row.set_subtitle(&info.manufacturer);
+            }
+            "bios" => {
+                row.set_subtitle(&info.bios_version);
+            }
+            _ => {}
         }
     }
 }
@@ -334,6 +421,101 @@ fn update_cpu_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>
                     _ => {}
                 }
             }
+        }
+    }
+}
+
+// Version that takes data directly for background threading
+fn update_cpu_info_with_data(refs: &WidgetRefs, info: tuxedo_common::types::CpuInfo) {
+    let caps = &info.capabilities;
+    
+    for (key, row) in refs {
+        match key.as_str() {
+            "name" => {
+                row.set_subtitle(&info.name);
+                row.set_visible(true);
+            }
+            "freq" => {
+                row.set_subtitle(&format!("{} MHz", info.median_frequency / 1000));
+                row.set_visible(true);
+            }
+            "load" => {
+                row.set_subtitle(&format!("{:.1}%", info.median_load));
+                row.set_visible(true);
+            }
+            "temp" => {
+                row.set_subtitle(&format!("{:.1}°C", info.package_temp));
+                row.set_visible(true);
+            }
+            "power" => {
+                if let Some(pwr) = info.package_power {
+                    if let Some(ref src) = info.power_source {
+                        row.set_subtitle(&format!("{:.1} W ({})", pwr, src));
+                    } else {
+                        row.set_subtitle(&format!("{:.1} W", pwr));
+                    }
+                    row.set_visible(true);
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "scaling_driver" => {
+                if caps.has_scaling_driver && info.scaling_driver != "not_available" {
+                    row.set_subtitle(&info.scaling_driver);
+                    row.set_visible(true);
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "governor" => {
+                if caps.has_scaling_governor && info.governor != "not_available" {
+                    row.set_subtitle(&info.governor);
+                    row.set_visible(true);
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "epp" => {
+                if caps.has_energy_performance_preference {
+                    if let Some(ref epp) = info.energy_performance_preference {
+                        row.set_subtitle(epp);
+                        row.set_visible(true);
+                    } else {
+                        row.set_visible(false);
+                    }
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "boost" => {
+                if caps.has_boost {
+                    row.set_subtitle(if info.boost_enabled { "Enabled" } else { "Disabled" });
+                    row.set_visible(true);
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "smt" => {
+                if caps.has_smt {
+                    row.set_subtitle(if info.smt_enabled { "Enabled" } else { "Disabled" });
+                    row.set_visible(true);
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "amd_pstate" => {
+                if caps.has_amd_pstate {
+                    if let Some(ref status) = info.amd_pstate_status {
+                        row.set_subtitle(&format!("{} mode", status));
+                        row.set_visible(true);
+                    } else {
+                        row.set_visible(false);
+                    }
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            _ => {}
         }
     }
 }
