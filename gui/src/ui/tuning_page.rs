@@ -762,12 +762,15 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
 }
 
 fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+    use tuxedo_common::types::FanCurve;
+    
     let group = adw::PreferencesGroup::builder()
         .title("Fans")
         .build();
     
     let control_row = adw::SwitchRow::builder()
         .title("Control fans")
+        .subtitle("Enable custom fan curves")
         .build();
     
     control_row.set_active(profile.fan_settings.control_enabled);
@@ -783,7 +786,157 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
     
     group.add(&control_row);
     
+    // Add fan curve editors for each fan
+    if profile.fan_settings.control_enabled {
+        // Get number of fans (default to 2 if curves don't exist)
+        let fan_count = if profile.fan_settings.curves.is_empty() {
+            2  // Default assumption
+        } else {
+            profile.fan_settings.curves.len().max(1)
+        };
+        
+        for fan_id in 0..fan_count {
+            let curve = profile.fan_settings.curves
+                .iter()
+                .find(|c| c.fan_id == fan_id as u32)
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Default curve: 0°C->0%, 50°C->50%, 80°C->100%
+                    FanCurve {
+                        fan_id: fan_id as u32,
+                        points: vec![(0, 0), (50, 50), (80, 100)],
+                    }
+                });
+            
+            let expander = adw::ExpanderRow::builder()
+                .title(&format!("Fan {} Curve", fan_id))
+                .subtitle(&format!("{} points", curve.points.len()))
+                .build();
+            
+            // Add point controls
+            for (i, (temp, speed)) in curve.points.iter().enumerate() {
+                let point_row = adw::ActionRow::builder()
+                    .title(&format!("Point {}", i + 1))
+                    .build();
+                
+                let temp_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let temp_label = gtk::Label::new(Some("Temp:"));
+                let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                temp_spin.set_value(*temp as f64);
+                temp_spin.set_suffix(Some("°C"));
+                temp_spin.set_width_chars(5);
+                temp_box.append(&temp_label);
+                temp_box.append(&temp_spin);
+                
+                let speed_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let speed_label = gtk::Label::new(Some("Speed:"));
+                let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                speed_spin.set_value(*speed as f64);
+                speed_spin.set_suffix(Some("%"));
+                speed_spin.set_width_chars(5);
+                speed_box.append(&speed_label);
+                speed_box.append(&speed_spin);
+                
+                point_row.add_suffix(&temp_box);
+                point_row.add_suffix(&speed_box);
+                
+                // Update curve on value change
+                let config_clone = config.clone();
+                let profile_name_clone = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                
+                let speed_spin_clone = speed_spin.clone();
+                temp_spin.connect_value_changed(move |temp_spin| {
+                    let temp_val = temp_spin.value() as u8;
+                    let speed_val = speed_spin_clone.value() as u8;
+                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                let temp_spin_clone = temp_spin.clone();
+                speed_spin.connect_value_changed(move |speed_spin| {
+                    let temp_val = temp_spin_clone.value() as u8;
+                    let speed_val = speed_spin.value() as u8;
+                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                expander.add_row(&point_row);
+            }
+            
+            // Add button to add new point
+            let add_point_row = adw::ActionRow::builder()
+                .title("Add Point")
+                .build();
+            
+            let add_button = Button::with_label("➕ Add");
+            add_button.add_css_class("suggested-action");
+            add_button.set_valign(gtk::Align::Center);
+            
+            let config_clone = config.clone();
+            let profile_name_clone = profile.name.clone();
+            let fan_id_copy = fan_id as u32;
+            add_button.connect_clicked(move |_| {
+                add_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy);
+            });
+            
+            add_point_row.add_suffix(&add_button);
+            expander.add_row(&add_point_row);
+            
+            group.add(&expander);
+        }
+    }
+    
     group
+}
+
+fn update_fan_curve_point(
+    config: &Rc<RefCell<Config>>,
+    profile_name: &str,
+    fan_id: u32,
+    point_idx: usize,
+    temp: u8,
+    speed: u8,
+) {
+    let mut cfg = config.borrow_mut();
+    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+        // Find or create the fan curve
+        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
+            if point_idx < curve.points.len() {
+                curve.points[point_idx] = (temp, speed);
+            }
+        } else {
+            // Create new curve if it doesn't exist
+            prof.fan_settings.curves.push(FanCurve {
+                fan_id,
+                points: vec![(temp, speed)],
+            });
+        }
+    }
+}
+
+fn add_fan_curve_point(
+    config: &Rc<RefCell<Config>>,
+    profile_name: &str,
+    fan_id: u32,
+) {
+    let mut cfg = config.borrow_mut();
+    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
+            // Add a new point with reasonable defaults
+            let new_temp = if let Some((last_temp, _)) = curve.points.last() {
+                (*last_temp + 10).min(100)
+            } else {
+                50
+            };
+            curve.points.push((new_temp, 50));
+        } else {
+            // Create new curve with one point
+            prof.fan_settings.curves.push(FanCurve {
+                fan_id,
+                points: vec![(50, 50)],
+            });
+        }
+    }
 }
 
 // Add to GUI for fan curve editor
