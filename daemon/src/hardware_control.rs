@@ -153,6 +153,7 @@ fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     let base_path = find_keyboard_backlight_path()
         .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
     
+    use tuxedo_common::types::KeyboardMode;
     match &settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
             log::info!("Applying keyboard: RGB({}, {}, {}) brightness {}%", r, g, b, brightness);
@@ -187,8 +188,14 @@ fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
             
             log::info!("✅ Keyboard backlight applied successfully");
         }
-        KeyboardMode::Effect { effect, speed } => {
-            log::info!("Keyboard effect mode not yet implemented: {} at speed {}", effect, speed);
+        _ => {
+            // For all effect modes, use RgbKeyboardControl
+            if let Ok(kbd) = RgbKeyboardControl::new() {
+                kbd.set_mode(&settings.mode)?;
+                log::info!("✅ Keyboard effect mode applied successfully");
+            } else {
+                log::warn!("RGB keyboard control not available for effect modes");
+            }
         }
     }
     
@@ -486,36 +493,80 @@ impl RgbKeyboardControl {
     }
     
     /// Set keyboard mode (if supported)
-    pub fn set_mode(&self, mode: KeyboardMode) -> Result<()> {
+    pub fn set_mode(&self, mode: &tuxedo_common::types::KeyboardMode) -> Result<()> {
+        use tuxedo_common::types::KeyboardMode;
         match mode {
-            KeyboardMode::Static { r, g, b } => {
-                self.set_color(r, g, b)?;
+            KeyboardMode::SingleColor { r, g, b, brightness } => {
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
             }
-            KeyboardMode::Breathing { r, g, b, speed } => {
+            KeyboardMode::Breathe { r, g, b, brightness, speed } => {
                 // Some keyboards support breathing mode via sysfs
                 let mode_path = format!("{}/mode", self.base_path);
                 if Path::new(&mode_path).exists() {
                     fs::write(&mode_path, "breathing")?;
                 }
-                self.set_color(r, g, b)?;
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
                 log::info!("Set breathing mode with speed {}", speed);
             }
-            KeyboardMode::Wave { speed } => {
+            KeyboardMode::Wave { brightness, speed } => {
                 let mode_path = format!("{}/mode", self.base_path);
                 if Path::new(&mode_path).exists() {
                     fs::write(&mode_path, "wave")?;
+                    self.set_brightness(*brightness)?;
                     log::info!("Set wave mode with speed {}", speed);
                 } else {
                     return Err(anyhow!("Wave mode not supported"));
                 }
             }
-            KeyboardMode::Rainbow { speed } => {
+            KeyboardMode::Cycle { brightness, speed } => {
                 let mode_path = format!("{}/mode", self.base_path);
                 if Path::new(&mode_path).exists() {
-                    fs::write(&mode_path, "rainbow")?;
-                    log::info!("Set rainbow mode with speed {}", speed);
+                    fs::write(&mode_path, "cycle")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set cycle mode with speed {}", speed);
                 } else {
-                    return Err(anyhow!("Rainbow mode not supported"));
+                    return Err(anyhow!("Cycle mode not supported"));
+                }
+            }
+            KeyboardMode::Dance { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "dance")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set dance mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Dance mode not supported"));
+                }
+            }
+            KeyboardMode::Flash { r, g, b, brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "flash")?;
+                }
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
+                log::info!("Set flash mode with speed {}", speed);
+            }
+            KeyboardMode::RandomColor { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "random")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set random color mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Random color mode not supported"));
+                }
+            }
+            KeyboardMode::Tempo { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "tempo")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set tempo mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Tempo mode not supported"));
                 }
             }
         }
@@ -523,48 +574,3 @@ impl RgbKeyboardControl {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum KeyboardMode {
-    Static { r: u8, g: u8, b: u8 },
-    Breathing { r: u8, g: u8, b: u8, speed: u8 },
-    Wave { speed: u8 },
-    Rainbow { speed: u8 },
-}
-
-// Add DBus methods for RGB control
-impl ControlInterface {
-    async fn set_keyboard_rgb(&self, red: u8, green: u8, blue: u8) -> Result<(), zbus::fdo::Error> {
-        match RgbKeyboardControl::new() {
-            Ok(kbd) => kbd.set_color(red, green, blue)
-                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
-            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
-        }
-    }
-    
-    async fn set_keyboard_brightness(&self, brightness: u8) -> Result<(), zbus::fdo::Error> {
-        match RgbKeyboardControl::new() {
-            Ok(kbd) => kbd.set_brightness(brightness)
-                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
-            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
-        }
-    }
-    
-    async fn get_keyboard_brightness(&self) -> Result<u8, zbus::fdo::Error> {
-        match RgbKeyboardControl::new() {
-            Ok(kbd) => kbd.get_brightness()
-                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
-            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
-        }
-    }
-    
-    async fn set_keyboard_mode(&self, mode_json: &str) -> Result<(), zbus::fdo::Error> {
-        let mode: KeyboardMode = serde_json::from_str(mode_json)
-            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-        
-        match RgbKeyboardControl::new() {
-            Ok(kbd) => kbd.set_mode(mode)
-                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
-            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
-        }
-    }
-}

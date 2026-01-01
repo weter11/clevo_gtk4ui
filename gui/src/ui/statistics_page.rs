@@ -82,6 +82,7 @@ type WidgetRefs = Vec<(String, adw::ActionRow)>;
 fn update_statistics(widgets: &[((&str, WidgetRefs))], dbus_client: Rc<RefCell<Option<DbusClient>>>) {
     for (section_type, refs) in widgets {
         match *section_type {
+            "system" => update_system_info(refs, dbus_client.clone()),
             "cpu" => update_cpu_info(refs, dbus_client.clone()),
             "battery" => update_battery_info(refs),
             "fans" => update_fans_info(refs, dbus_client.clone()),
@@ -122,6 +123,28 @@ fn create_system_info_section() -> (adw::PreferencesGroup, WidgetRefs) {
     
     (group, refs)
 }
+
+fn update_system_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>>>) {
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        if let Ok(info) = client.get_system_info() {
+            for (key, row) in refs {
+                match key.as_str() {
+                    "model" => {
+                        row.set_subtitle(&info.product_name);
+                    }
+                    "manufacturer" => {
+                        row.set_subtitle(&info.manufacturer);
+                    }
+                    "bios" => {
+                        row.set_subtitle(&info.bios_version);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 
 fn create_cpu_section() -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
@@ -467,12 +490,18 @@ fn update_battery_info(refs: &WidgetRefs) {
         return;
     };
     
+    // Check battery status first
+    let status = std::fs::read_to_string(format!("{}/status", battery_path))
+        .unwrap_or_else(|_| "Unknown".to_string())
+        .trim()
+        .to_string();
+    
+    let on_ac = status == "Charging" || status == "Full" || status == "Not charging";
+    
     for (key, row) in refs {
         match key.as_str() {
             "status" => {
-                if let Ok(status) = std::fs::read_to_string(format!("{}/status", battery_path)) {
-                    row.set_subtitle(status.trim());
-                }
+                row.set_subtitle(&status);
             }
             "capacity" => {
                 if let Ok(capacity) = std::fs::read_to_string(format!("{}/capacity", battery_path)) {
@@ -494,9 +523,16 @@ fn update_battery_info(refs: &WidgetRefs) {
                 }
             }
             "power" => {
-                if let Ok(power) = std::fs::read_to_string(format!("{}/power_now", battery_path)) {
-                    if let Ok(p) = power.trim().parse::<f64>() {
-                        row.set_subtitle(&format!("{:.2} W", p / 1_000_000.0));
+                if on_ac {
+                    // Hide power draw when on AC
+                    row.set_subtitle("N/A (on AC power)");
+                    row.set_visible(false);
+                } else {
+                    row.set_visible(true);
+                    if let Ok(power) = std::fs::read_to_string(format!("{}/power_now", battery_path)) {
+                        if let Ok(p) = power.trim().parse::<f64>() {
+                            row.set_subtitle(&format!("{:.2} W", p / 1_000_000.0));
+                        }
                     }
                 }
             }
@@ -680,16 +716,28 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
     if let Some(client) = dbus_client.borrow().as_ref() {
         match client.get_fan_speeds() {
             Ok(fans) => {
-                for (idx, (fan_id, rpm)) in fans.iter().enumerate() {
+                for (idx, (fan_id, speed)) in fans.iter().enumerate() {
                     if idx < refs.len() {
                         let (_, row) = &refs[idx];
                         
+                        // Detect if speed is RPM or percentage
+                        // Typically, RPM values are much larger than 100
+                        let is_rpm = *speed > 200;
+                        
                         match client.get_fan_temperature(*fan_id) {
                             Ok(temp) => {
-                                row.set_subtitle(&format!("{} RPM - {}°C", rpm, temp));
+                                if is_rpm {
+                                    row.set_subtitle(&format!("{} RPM - {}°C", speed, temp));
+                                } else {
+                                    row.set_subtitle(&format!("{}% - {}°C", speed, temp));
+                                }
                             }
                             Err(_) => {
-                                row.set_subtitle(&format!("{} RPM", rpm));
+                                if is_rpm {
+                                    row.set_subtitle(&format!("{} RPM", speed));
+                                } else {
+                                    row.set_subtitle(&format!("{}%", speed));
+                                }
                             }
                         }
                         
@@ -698,6 +746,7 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                 }
             }
             Err(_) => {
+                // Fallback to reading from sysfs
                 if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
                     let mut fan_idx = 0;
                     for entry in entries.flatten() {
@@ -709,7 +758,22 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                                 if let Ok(rpm) = speed.trim().parse::<u32>() {
                                     if rpm > 0 && fan_idx < refs.len() {
                                         let (_, row) = &refs[fan_idx];
-                                        row.set_subtitle(&format!("{} RPM", rpm));
+                                        
+                                        // Check for temperature sensor
+                                        let temp_input = format!("temp{}_input", i);
+                                        let temp_path = entry.path().join(&temp_input);
+                                        
+                                        if let Ok(temp_str) = std::fs::read_to_string(&temp_path) {
+                                            if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
+                                                let temp_c = temp_millideg as f32 / 1000.0;
+                                                row.set_subtitle(&format!("{} RPM - {:.1}°C", rpm, temp_c));
+                                            } else {
+                                                row.set_subtitle(&format!("{} RPM", rpm));
+                                            }
+                                        } else {
+                                            row.set_subtitle(&format!("{} RPM", rpm));
+                                        }
+                                        
                                         row.set_visible(true);
                                         fan_idx += 1;
                                     }
