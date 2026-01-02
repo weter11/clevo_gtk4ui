@@ -110,7 +110,7 @@ impl FanCurveManager {
             
             if temp >= temp1 as f32 && temp <= temp2 as f32 {
                 let temp_diff = temp2 as f32 - temp1 as f32;
-                if temp_diff == 0.0 {
+                if temp_diff.abs() < f32::EPSILON {
                     return speed1;
                 }
                 let ratio = (temp - temp1 as f32) / temp_diff;

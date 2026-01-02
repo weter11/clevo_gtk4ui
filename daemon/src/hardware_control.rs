@@ -376,7 +376,7 @@ fn calculate_fan_speed_from_curve(points: &[(u8, u8)], temp: f32) -> u32 {
         
         if temp >= temp1 as f32 && temp <= temp2 as f32 {
             let temp_diff = temp2 as f32 - temp1 as f32;
-            if temp_diff == 0.0 {
+            if temp_diff.abs() < f32::EPSILON {
                 return speed1 as u32;
             }
             let ratio = (temp - temp1 as f32) / temp_diff;

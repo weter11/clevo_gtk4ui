@@ -92,7 +92,7 @@ impl FanCurveEditor {
                 let new_temp = if crv.points.is_empty() {
                     50
                 } else {
-                    crv.points.last().map(|p| p.0.saturating_add(10).min(100)).unwrap_or(50)
+                    crv.points.last().unwrap().0.saturating_add(10).min(100)
                 };
                 let new_speed = 50;
                 crv.points.push((new_temp, new_speed));
