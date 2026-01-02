@@ -191,6 +191,11 @@ impl TuxedoIo {
         
         match self.interface {
             HardwareInterface::Clevo => {
+                // Validate fan_id is within bounds
+                if fan_id >= 3 {
+                    return Err(anyhow!("Invalid fan ID: {}", fan_id));
+                }
+                
                 // Clevo sets all fans at once with packed value
                 let mut current_speeds = [0u32; 3];
                 for i in 0..self.fan_count.min(3) {

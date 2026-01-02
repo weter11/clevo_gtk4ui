@@ -24,8 +24,9 @@ impl Config {
     }
     
     pub fn save(&self) -> Result<()> {
-        let config_dir = self.config_path.parent().unwrap();
-        fs::create_dir_all(config_dir)?;
+        if let Some(config_dir) = self.config_path.parent() {
+            fs::create_dir_all(config_dir)?;
+        }
         
         let json = serde_json::to_string_pretty(&self.data)?;
         fs::write(&self.config_path, json)?;
@@ -41,9 +42,12 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let config_path = Self::config_dir()
+            .unwrap_or_else(|_| PathBuf::from("/tmp/tuxedo-control-center"))
+            .join("config.json");
         Self {
             data: AppConfig::default(),
-            config_path: Self::config_dir().unwrap().join("config.json"),
+            config_path,
         }
     }
 }

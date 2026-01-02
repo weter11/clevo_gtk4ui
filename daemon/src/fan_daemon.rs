@@ -109,7 +109,11 @@ impl FanCurveManager {
             let (temp2, speed2) = sorted_points[i + 1];
             
             if temp >= temp1 as f32 && temp <= temp2 as f32 {
-                let ratio = (temp - temp1 as f32) / (temp2 as f32 - temp1 as f32);
+                let temp_diff = temp2 as f32 - temp1 as f32;
+                if temp_diff == 0.0 {
+                    return speed1;
+                }
+                let ratio = (temp - temp1 as f32) / temp_diff;
                 let speed = speed1 as f32 + ratio * (speed2 as f32 - speed1 as f32);
                 return speed.round() as u8;
             }
@@ -290,6 +294,6 @@ impl FanDaemon {
         }
         
         // If temp is above last point
-        points.last().unwrap().1
+        points.last().map(|p| p.1).unwrap_or(50)
     }
 }
