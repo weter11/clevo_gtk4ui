@@ -62,6 +62,13 @@ impl BatteryControl {
             return Err(anyhow!("Threshold must be between 0 and 100"));
         }
         
+        // Validate that start threshold is less than end threshold
+        if let Ok(end_threshold) = self.get_charge_control_end_threshold() {
+            if threshold >= end_threshold {
+                return Err(anyhow!("Start threshold ({}) must be less than end threshold ({})", threshold, end_threshold));
+            }
+        }
+        
         let path = self.battery_path.join("charge_control_start_threshold");
         fs::write(&path, threshold.to_string())?;
         Ok(())
@@ -79,6 +86,13 @@ impl BatteryControl {
     pub fn set_charge_control_end_threshold(&self, threshold: u8) -> Result<()> {
         if threshold > 100 {
             return Err(anyhow!("Threshold must be between 0 and 100"));
+        }
+        
+        // Validate that end threshold is greater than start threshold
+        if let Ok(start_threshold) = self.get_charge_control_start_threshold() {
+            if threshold <= start_threshold {
+                return Err(anyhow!("End threshold ({}) must be greater than start threshold ({})", threshold, start_threshold));
+            }
         }
         
         let path = self.battery_path.join("charge_control_end_threshold");

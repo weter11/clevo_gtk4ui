@@ -648,7 +648,7 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
     let loads_vec: Vec<f32> = loads.values().copied().collect();
     let median_load = if !loads_vec.is_empty() {
         let mut sorted = loads_vec.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         sorted[sorted.len() / 2]
     } else {
         0.0
