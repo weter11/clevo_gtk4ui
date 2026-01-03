@@ -172,6 +172,19 @@ pub fn get_fan_speeds(&self) -> Result<Vec<(u32, u32)>> {
     Ok(serde_json::from_str(&json)?)
 }
 
+pub fn get_fan_info(&self) -> Result<Vec<tuxedo_common::types::FanInfo>> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    let json: String = proxy.call("GetFanInfo", &())?;
+    Ok(serde_json::from_str(&json)?)
+}
+
 pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
     let conn = self.connection.lock().unwrap();
     let proxy = zbus::blocking::Proxy::new(
