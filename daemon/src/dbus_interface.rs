@@ -30,6 +30,14 @@ impl ControlInterface {
         }
     }
 
+    async fn get_wifi_info(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_wifi_info() {
+            Ok(info) => serde_json::to_string(&info)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
     async fn set_cpu_governor(&self, governor: &str) -> Result<(), zbus::fdo::Error> {
         crate::hardware_control::set_cpu_governor(governor)
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
@@ -93,6 +101,34 @@ async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
         Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
     }
 }
+
+    async fn get_fan_info(&self) -> Result<String, zbus::fdo::Error> {
+        if !crate::tuxedo_io::TuxedoIo::is_available() {
+            return Ok("[]".to_string());
+        }
+        
+        match crate::tuxedo_io::TuxedoIo::new() {
+            Ok(io) => {
+                let mut fans_info = Vec::new();
+                for fan_id in 0..io.get_fan_count() {
+                    let speed = io.get_fan_speed(fan_id).ok();
+                    let temperature = io.get_fan_temperature(fan_id).ok().map(|t| t as f32);
+                    
+                    let info = FanInfo {
+                        id: fan_id,
+                        name: format!("Fan {}", fan_id),
+                        rpm_or_percent: speed.unwrap_or(0),
+                        temperature,
+                        is_rpm: false,  // Currently returning percentage
+                    };
+                    fans_info.push(info);
+                }
+                serde_json::to_string(&fans_info)
+                    .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+            }
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
 
     async fn get_fan_temperature(&self, fan_id: u32) -> Result<u32, zbus::fdo::Error> {
         if !crate::tuxedo_io::TuxedoIo::is_available() {

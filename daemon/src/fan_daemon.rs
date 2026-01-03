@@ -1,6 +1,4 @@
 use anyhow::{Result, anyhow};
-use std::fs;
-use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::time;
 use tuxedo_common::types::{FanCurve, FanSettings};
@@ -215,48 +213,33 @@ impl FanDaemon {
     }
     
     fn apply_fan_curves(&self, settings: &FanSettings) -> Result<()> {
-        let tuxedo_io_path = "/sys/devices/platform/tuxedo_io";
-        
-        if !Path::new(tuxedo_io_path).exists() {
+        // Use /dev/tuxedo_io instead of sysfs
+        if !TuxedoIo::is_available() {
             return Ok(());
         }
         
+        let io = TuxedoIo::new()?;
+        
         for curve in &settings.curves {
             // Read current temperature for this fan
-            let temp = self.read_fan_temperature(curve.fan_id)?;
+            let temp = match io.get_fan_temperature(curve.fan_id) {
+                Ok(t) => t as u8,
+                Err(e) => {
+                    log::warn!("Failed to read temperature for fan {}: {}", curve.fan_id, e);
+                    continue;
+                }
+            };
             
             // Find appropriate speed based on curve
             let speed = self.calculate_fan_speed(temp, &curve.points);
             
-            // Apply speed
-            let speed_path = format!("{}/fan{}_speed", tuxedo_io_path, curve.fan_id);
-            if Path::new(&speed_path).exists() {
-                fs::write(&speed_path, speed.to_string())?;
+            // Apply speed using tuxedo_io ioctl
+            if let Err(e) = io.set_fan_speed(curve.fan_id, speed as u32) {
+                log::error!("Failed to set speed for fan {}: {}", curve.fan_id, e);
             }
         }
         
         Ok(())
-    }
-    
-    fn read_fan_temperature(&self, fan_id: u32) -> Result<u8> {
-        // TODO: Map fan to appropriate temperature sensor
-        // For now, use package temperature
-        for entry in fs::read_dir("/sys/class/hwmon")? {
-            let entry = entry?;
-            let name_path = entry.path().join("name");
-            if let Ok(name) = fs::read_to_string(&name_path) {
-                if name.trim() == "coretemp" || name.trim() == "k10temp" {
-                    let temp_path = entry.path().join("temp1_input");
-                    if let Ok(temp_str) = fs::read_to_string(&temp_path) {
-                        if let Ok(temp) = temp_str.trim().parse::<f32>() {
-                            return Ok((temp / 1000.0) as u8);
-                        }
-                    }
-                }
-            }
-        }
-        
-        Ok(50) // Default fallback
     }
     
     fn calculate_fan_speed(&self, temp: u8, points: &[(u8, u8)]) -> u8 {

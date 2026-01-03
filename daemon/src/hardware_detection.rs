@@ -648,8 +648,14 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
     let loads_vec: Vec<f32> = loads.values().copied().collect();
     let median_load = if !loads_vec.is_empty() {
         let mut sorted = loads_vec.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        sorted[sorted.len() / 2]
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // Calculate true median: middle value for odd length, average of two middle for even
+        if sorted.len() % 2 == 0 {
+            let mid = sorted.len() / 2;
+            (sorted[mid - 1] + sorted[mid]) / 2.0
+        } else {
+            sorted[sorted.len() / 2]
+        }
     } else {
         0.0
     };

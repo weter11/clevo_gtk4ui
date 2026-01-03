@@ -55,6 +55,19 @@ impl DbusClient {
         Ok(serde_json::from_str(&json)?)
     }
     
+    pub fn get_wifi_info(&self) -> Result<Vec<WiFiInfo>> {
+        let conn = self.connection.lock().unwrap();
+        let proxy = zbus::blocking::Proxy::new(
+            &*conn,
+            "com.tuxedo.Control",
+            "/com/tuxedo/Control",
+            "com.tuxedo.Control",
+        )?;
+        
+        let json: String = proxy.call("GetWifiInfo", &())?;
+        Ok(serde_json::from_str(&json)?)
+    }
+    
     pub fn set_cpu_governor(&self, governor: &str) -> Result<()> {
         let conn = self.connection.lock().unwrap();
         let proxy = zbus::blocking::Proxy::new(
@@ -169,6 +182,19 @@ pub fn get_fan_speeds(&self) -> Result<Vec<(u32, u32)>> {
     )?;
     
     let json: String = proxy.call("GetFanSpeeds", &())?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+pub fn get_fan_info(&self) -> Result<Vec<tuxedo_common::types::FanInfo>> {
+    let conn = self.connection.lock().unwrap();
+    let proxy = zbus::blocking::Proxy::new(
+        &*conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    )?;
+    
+    let json: String = proxy.call("GetFanInfo", &())?;
     Ok(serde_json::from_str(&json)?)
 }
 
