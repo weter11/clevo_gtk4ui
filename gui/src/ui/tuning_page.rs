@@ -820,19 +820,19 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                     .build();
                 
                 let temp_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                let temp_label = gtk::Label::new(Some("Temp:"));
+                let temp_label = gtk::Label::new(Some("Temp (°C):"));
                 let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
                 temp_spin.set_value(*temp as f64);
-                temp_spin.set_suffix(Some("°C"));
+//                temp_spin.set_suffix(Some("°C"));
                 temp_spin.set_width_chars(5);
                 temp_box.append(&temp_label);
                 temp_box.append(&temp_spin);
                 
                 let speed_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                let speed_label = gtk::Label::new(Some("Speed:"));
+                let speed_label = gtk::Label::new(Some("Speed (%):"));
                 let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
                 speed_spin.set_value(*speed as f64);
-                speed_spin.set_suffix(Some("%"));
+//                speed_spin.set_suffix(Some("%"));
                 speed_spin.set_width_chars(5);
                 speed_box.append(&speed_label);
                 speed_box.append(&speed_spin);
