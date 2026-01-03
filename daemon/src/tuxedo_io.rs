@@ -355,9 +355,6 @@ impl TuxedoIo {
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
     }
-
-    // (rest of file unchanged)
-}
     
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
