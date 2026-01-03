@@ -90,10 +90,11 @@ fn start_background_poll_cpu(
 ) {
     let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
     
+    let dbus_clone = dbus_client.clone();
     // Background thread for polling
     std::thread::spawn(move || {
         loop {
-            if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Some(client) = dbus_clone.borrow().as_ref() {
                 if let Ok(cpu_info) = client.get_cpu_info() {
                     let _ = sender.send(cpu_info);
                 }
@@ -107,6 +108,9 @@ fn start_background_poll_cpu(
         update_cpu_info_with_data(&refs, cpu_info);
         glib::ControlFlow::Continue
     });
+    
+    // Do an immediate first update to avoid showing "Loading..."
+    update_cpu_info(&refs, dbus_client);
 }
 
 // Background polling for system info
@@ -117,9 +121,10 @@ fn start_background_poll_system(
 ) {
     let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
     
+    let dbus_clone = dbus_client.clone();
     std::thread::spawn(move || {
         loop {
-            if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Some(client) = dbus_clone.borrow().as_ref() {
                 if let Ok(system_info) = client.get_system_info() {
                     let _ = sender.send(system_info);
                 }
@@ -132,6 +137,9 @@ fn start_background_poll_system(
         update_system_info_with_data(&refs, system_info);
         glib::ControlFlow::Continue
     });
+    
+    // Do an immediate first update to avoid showing "Loading..." 
+    update_system_info(&refs, dbus_client);
 }
 
 // Background polling for battery info
