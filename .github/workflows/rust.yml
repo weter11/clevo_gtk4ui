@@ -29,7 +29,11 @@ jobs:
             pkg-config \
             libgtk-4-dev \
             libadwaita-1-dev \
-            libglib2.0-dev
+            libglib2.0-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf-2.0-dev \
+            libatk1.0-dev
 
     - name: Clean the project
       run: cargo clean 
