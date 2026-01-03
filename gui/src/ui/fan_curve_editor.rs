@@ -211,17 +211,15 @@ impl FanCurveEditor {
         let drawing_clone = drawing_area.clone();
         let row_clone = row.clone();
         delete_btn.connect_clicked(move |_| {
-            let mut crv = curve_clone.borrow_mut();
-            if crv.points.len() > 1 && index < crv.points.len() {
-                crv.points.remove(index);
-                drawing_clone.queue_draw();
-                
-                // Remove the row from UI
-                if let Some(parent) = row_clone.parent() {
-                    parent.remove(&row_clone);
-                }
-            }
-        });
+          let mut crv = curve_clone.borrow_mut();
+          if crv.points.len() > 1 && index < crv.points.len() {
+        crv.points.remove(index);
+        drawing_clone.queue_draw();
+        
+        // Hide the row instead of removing it
+        row_clone.set_visible(false);
+    }
+});
         
         row.add_suffix(&delete_btn);
 
