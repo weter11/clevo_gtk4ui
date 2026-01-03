@@ -990,7 +990,6 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                                 row.set_visible(true);
                             }
                         }
-                    }
                     Err(_) => {
                 // Fallback to reading from sysfs
                 if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
