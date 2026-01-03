@@ -30,6 +30,14 @@ impl ControlInterface {
         }
     }
 
+    async fn get_wifi_info(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_wifi_info() {
+            Ok(info) => serde_json::to_string(&info)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
     async fn set_cpu_governor(&self, governor: &str) -> Result<(), zbus::fdo::Error> {
         crate::hardware_control::set_cpu_governor(governor)
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
