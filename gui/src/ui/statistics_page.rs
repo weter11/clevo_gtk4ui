@@ -88,29 +88,25 @@ fn start_background_poll_cpu(
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
     poll_rate_ms: u64,
 ) {
-    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
-    
+    // Clone for the closure
+    let refs_clone = refs.clone();
     let dbus_clone = dbus_client.clone();
-    // Background thread for polling
-    std::thread::spawn(move || {
-        loop {
+    
+    // Do an immediate first update
+    update_cpu_info(&refs, dbus_client.clone());
+    
+    // Schedule periodic updates
+    glib::timeout_add_local(
+        std::time::Duration::from_millis(poll_rate_ms),
+        move || {
             if let Some(client) = dbus_clone.borrow().as_ref() {
                 if let Ok(cpu_info) = client.get_cpu_info() {
-                    let _ = sender.send(cpu_info);
+                    update_cpu_info_with_data(&refs_clone, cpu_info);
                 }
             }
-            std::thread::sleep(Duration::from_millis(poll_rate_ms));
+            glib::ControlFlow::Continue
         }
-    });
-    
-    // UI update on main thread
-    receiver.attach(None, move |cpu_info| {
-        update_cpu_info_with_data(&refs, cpu_info);
-        glib::ControlFlow::Continue
-    });
-    
-    // Do an immediate first update to avoid showing "Loading..."
-    update_cpu_info(&refs, dbus_client);
+    );
 }
 
 // Background polling for system info
@@ -119,27 +115,25 @@ fn start_background_poll_system(
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
     poll_rate_ms: u64,
 ) {
-    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
-    
+    // Clone for the closure
+    let refs_clone = refs.clone();
     let dbus_clone = dbus_client.clone();
-    std::thread::spawn(move || {
-        loop {
+    
+    // Do an immediate first update
+    update_system_info(&refs, dbus_client.clone());
+    
+    // Schedule periodic updates
+    glib::timeout_add_local(
+        std::time::Duration::from_millis(poll_rate_ms),
+        move || {
             if let Some(client) = dbus_clone.borrow().as_ref() {
                 if let Ok(system_info) = client.get_system_info() {
-                    let _ = sender.send(system_info);
+                    update_system_info_with_data(&refs_clone, system_info);
                 }
             }
-            std::thread::sleep(Duration::from_millis(poll_rate_ms));
+            glib::ControlFlow::Continue
         }
-    });
-    
-    receiver.attach(None, move |system_info| {
-        update_system_info_with_data(&refs, system_info);
-        glib::ControlFlow::Continue
-    });
-    
-    // Do an immediate first update to avoid showing "Loading..." 
-    update_system_info(&refs, dbus_client);
+    );
 }
 
 // Background polling for battery info
@@ -160,28 +154,27 @@ fn start_background_poll_fans(
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
     poll_rate_ms: u64,
 ) {
-    let (sender, receiver) = glib::MainContext::channel(glib::Priority::DEFAULT);
-    
+    // Clone for the closure
+    let refs_clone = refs.clone();
     let dbus_clone = dbus_client.clone();
-    std::thread::spawn(move || {
-        loop {
+    
+    // Schedule periodic updates
+    glib::timeout_add_local(
+        std::time::Duration::from_millis(poll_rate_ms),
+        move || {
             if let Some(client) = dbus_clone.borrow().as_ref() {
                 if let Ok(fans) = client.get_fan_info() {
-                    let _ = sender.send(fans);
+                    update_fans_info_with_data(&refs_clone, fans);
                 }
             }
-            std::thread::sleep(Duration::from_millis(poll_rate_ms));
+            glib::ControlFlow::Continue
         }
-    });
-    
-    receiver.attach(None, move |fans| {
-        update_fans_info_with_data(&refs, fans);
-        glib::ControlFlow::Continue
-    });
+    );
 }
 
 fn update_fans_info_with_data(refs: &WidgetRefs, fans: Vec<tuxedo_common::types::FanInfo>) {
     // Hide all rows first
+    type WidgetRefs = Vec<(String, adw::ActionRow)>;
     for (_, row) in refs {
         row.set_visible(false);
     }
