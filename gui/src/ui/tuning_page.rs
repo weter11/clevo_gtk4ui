@@ -964,11 +964,11 @@ pub fn create_fan_curve_editor(
         
         let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
         temp_spin.set_value(*temp as f64);
-        temp_spin.set_suffix(Some("°C"));
+//        temp_spin.set_suffix(Some("°C"));
         
         let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
         speed_spin.set_value(*speed as f64);
-        speed_spin.set_suffix(Some("%"));
+//        speed_spin.set_suffix(Some("%"));
         
         let remove_btn = gtk::Button::from_icon_name("user-trash-symbolic");
         remove_btn.add_css_class("destructive-action");
