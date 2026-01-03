@@ -2,7 +2,10 @@ name: Rust
 
 on:
   push:
-    branches: [ "dev-fan-logic-clean" ]
+    branches:
+      - main
+      - new_variant
+      - perplexity
   pull_request:
     branches: [ "main" ]
 
