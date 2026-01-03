@@ -5,9 +5,10 @@ on:
     branches:
       - main
       - new_variant
-      - perplexity
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+      - new_variant
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,7 +28,13 @@ jobs:
             libdbus-1-dev \
             pkg-config \
             libgtk-4-dev \
-            libadwaita-1-dev
+            libadwaita-1-dev \
+            libglib2.0-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf-2.0-dev \
+            libatk1.0-dev \
+            libgraphene-1.0-dev
 
     - name: Clean the project
       run: cargo clean 

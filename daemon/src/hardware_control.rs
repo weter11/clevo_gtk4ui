@@ -2,6 +2,16 @@ use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 use tuxedo_common::types::*;
+use crate::tuxedo_io::TuxedoIo;
+// use tuxedo_io::TuxedoIo;
+
+fn get_cpu_count() -> Result<u32> {
+    let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
+    let count = cpuinfo.lines()
+        .filter(|line| line.starts_with("processor"))
+        .count();
+    Ok(count as u32)
+}
 
 pub fn set_cpu_governor(governor: &str) -> Result<()> {
     let cpu_count = get_cpu_count()?;
@@ -97,8 +107,16 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
         set_cpu_governor(governor)?;
     }
     
+    if let Some(ref tdp_profile) = profile.cpu_settings.tdp_profile {
+        set_tdp_profile(tdp_profile)?;
+    }
+    
     if let Some(ref amd_status) = profile.cpu_settings.amd_pstate_status {
         set_amd_pstate_status(amd_status)?;
+    }
+    
+    if let Some(ref epp) = profile.cpu_settings.energy_performance_preference {
+        set_energy_performance_preference(epp)?;
     }
     
     if let (Some(min), Some(max)) = (profile.cpu_settings.min_frequency, profile.cpu_settings.max_frequency) {
@@ -128,35 +146,94 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
 
 fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     if !settings.control_enabled {
+        log::info!("Keyboard control disabled, skipping");
         return Ok(());
     }
     
+    let base_path = find_keyboard_backlight_path()
+        .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
+    
+    use tuxedo_common::types::KeyboardMode;
     match &settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
-            let color_path = "/sys/class/leds/rgb:kbd_backlight/multi_intensity";
-            let brightness_path = "/sys/class/leds/rgb:kbd_backlight/brightness";
+            log::info!("Applying keyboard: RGB({}, {}, {}) brightness {}%", r, g, b, brightness);
             
-            if Path::new(color_path).exists() {
-                fs::write(color_path, format!("{} {} {}", r, g, b))?;
+            let color_path = format!("{}/multi_intensity", base_path);
+            if Path::new(&color_path).exists() {
+                let color_str = format!("{} {} {}", r, g, b);
+                log::info!("Writing to {}: {}", color_path, color_str);
+                fs::write(&color_path, color_str)?;
+            } else {
+                log::warn!("multi_intensity not found at {}", color_path);
             }
             
-            if Path::new(brightness_path).exists() {
-                // Read max brightness
-                let max_brightness_path = "/sys/class/leds/rgb:kbd_backlight/max_brightness";
-                let max_brightness: u32 = fs::read_to_string(max_brightness_path)?
-                    .trim()
-                    .parse()
-                    .unwrap_or(255);
+            let brightness_path = format!("{}/brightness", base_path);
+            if Path::new(&brightness_path).exists() {
+                let max_brightness_path = format!("{}/max_brightness", base_path);
+                let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+                    max_str.trim().parse().unwrap_or(255)
+                } else {
+                    255
+                };
                 
                 let actual_brightness = ((*brightness as u32) * max_brightness) / 100;
-                fs::write(brightness_path, actual_brightness.to_string())?;
+                
+                log::info!("Writing to {}: {} ({}% of {} max)", 
+                    brightness_path, actual_brightness, brightness, max_brightness);
+                
+                fs::write(&brightness_path, actual_brightness.to_string())?;
+            } else {
+                log::warn!("brightness not found at {}", brightness_path);
             }
             
-            log::info!("Set keyboard: RGB({}, {}, {}), brightness {}%", r, g, b, brightness);
+            log::info!("✅ Keyboard backlight applied successfully");
         }
-        KeyboardMode::Effect { effect, speed } => {
-            log::info!("Keyboard effect mode not yet implemented: {} at speed {}", effect, speed);
-            // TODO: Implement tuxedo_keyboard driver effect modes
+        _ => {
+            // For all effect modes, use RgbKeyboardControl
+            if let Ok(kbd) = RgbKeyboardControl::new() {
+                kbd.set_mode(&settings.mode)?;
+                log::info!("✅ Keyboard effect mode applied successfully");
+            } else {
+                log::warn!("RGB keyboard control not available for effect modes");
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+// Preview keyboard settings without saving to profile (for real-time preview)
+pub fn preview_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
+    // Apply keyboard settings immediately, ignoring control_enabled flag
+    let base_path = find_keyboard_backlight_path()
+        .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
+    
+    use tuxedo_common::types::KeyboardMode;
+    match &settings.mode {
+        KeyboardMode::SingleColor { r, g, b, brightness } => {
+            let color_path = format!("{}/multi_intensity", base_path);
+            if Path::new(&color_path).exists() {
+                let color_str = format!("{} {} {}", r, g, b);
+                fs::write(&color_path, color_str)?;
+            }
+            
+            let brightness_path = format!("{}/brightness", base_path);
+            if Path::new(&brightness_path).exists() {
+                let max_brightness_path = format!("{}/max_brightness", base_path);
+                let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+                    max_str.trim().parse().unwrap_or(255)
+                } else {
+                    255
+                };
+                
+                let actual_brightness = ((*brightness as u32) * max_brightness) / 100;
+                fs::write(&brightness_path, actual_brightness.to_string())?;
+            }
+        }
+        _ => {
+            if let Ok(kbd) = RgbKeyboardControl::new() {
+                kbd.set_mode(&settings.mode)?;
+            }
         }
     }
     
@@ -197,59 +274,341 @@ fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
     Ok(())
 }
 
-fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
-    let tuxedo_io_path = "/sys/devices/platform/tuxedo_io";
-    
-    if !Path::new(tuxedo_io_path).exists() {
-        log::warn!("tuxedo_io not available, skipping fan settings");
-        return Ok(());
+pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("TDP profiles not available"));
     }
     
-    if !settings.control_enabled {
-        // Set to auto mode
-        let mode_path = format!("{}/fan_mode", tuxedo_io_path);
-        if Path::new(&mode_path).exists() {
-            fs::write(&mode_path, "auto")?;
-            log::info!("Set fans to auto mode");
-        }
-        return Ok(());
+    let io = TuxedoIo::new()?;
+    let profiles = io.get_available_profiles()?;
+    
+    if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
+        io.set_performance_profile(profile_id as u32)?;
+        log::info!("Set TDP profile to: {} (id: {})", profile_name, profile_id);
+        Ok(())
+    } else {
+        Err(anyhow!("Profile '{}' not found", profile_name))
+    }
+}
+
+pub fn set_fan_speed(fan_id: u32, speed_percent: u32) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Fan control not available"));
     }
     
-    // Set to manual mode
-    let mode_path = format!("{}/fan_mode", tuxedo_io_path);
-    if Path::new(&mode_path).exists() {
-        fs::write(&mode_path, "manual")?;
-    }
+    let speed = speed_percent.min(100);
+    let io = TuxedoIo::new()?;
+    io.set_fan_speed(fan_id, speed)?;
     
-    // Apply fan curves
-    for curve in &settings.curves {
-        for (idx, (temp, speed)) in curve.points.iter().enumerate() {
-            let temp_path = format!("{}/fan{}_temp{}", tuxedo_io_path, curve.fan_id, idx);
-            let speed_path = format!("{}/fan{}_speed{}", tuxedo_io_path, curve.fan_id, idx);
-            
-            if Path::new(&temp_path).exists() {
-                fs::write(&temp_path, temp.to_string())?;
-            }
-            
-            if Path::new(&speed_path).exists() {
-                fs::write(&speed_path, speed.to_string())?;
-            }
-        }
-        
-        log::info!("Applied fan curve for fan {}", curve.fan_id);
-    }
-    
+    log::info!("Set fan {} to {}%", fan_id, speed);
     Ok(())
 }
 
-fn get_cpu_count() -> Result<u32> {
-    let mut count = 0;
-    for i in 0..1024 {
-        let path = format!("/sys/devices/system/cpu/cpu{}", i);
-        if !Path::new(&path).exists() {
-            break;
-        }
-        count += 1;
+pub fn set_fan_auto(fan_id: u32) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Fan control not available"));
     }
-    Ok(count)
+    
+    let io = TuxedoIo::new()?;
+    io.set_fan_auto()?;
+    
+    log::info!("Set all fans to auto mode");
+    Ok(())
 }
+
+fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        log::info!("Fan control not available (/dev/tuxedo_io not present)");
+        return Ok(());
+    }
+    
+    log::info!("Applying fan settings: enabled={}", settings.control_enabled);
+    
+    if !settings.control_enabled {
+        set_fan_auto(0)?; // This sets all fans to auto
+        log::info!("Set all fans to auto mode");
+        return Ok(());
+    }
+    
+    // Apply custom fan curves
+    let io = TuxedoIo::new()?;
+    for curve in &settings.curves {
+        if curve.fan_id < io.get_fan_count() {
+            match io.get_fan_temperature(curve.fan_id) {
+                Ok(temp) => {
+                    let speed = calculate_fan_speed_from_curve(&curve.points, temp as f32);
+                    let _ = set_fan_speed(curve.fan_id, speed as u32);
+                }
+                Err(e) => {
+                    log::warn!("Failed to get temperature for fan {}: {}", curve.fan_id, e);
+                }
+            }
+        }
+    }
+    
+    log::info!("Fan settings applied");
+    Ok(())
+}
+
+fn calculate_fan_speed_from_curve(points: &[(u8, u8)], temp: f32) -> u32 {
+    if points.is_empty() {
+        return 50;
+    }
+    
+    if points.len() == 1 {
+        return points[0].1 as u32;
+    }
+    
+    let mut sorted_points = points.to_vec();
+    sorted_points.sort_by(|a, b| a.0.cmp(&b.0));
+    
+    if temp <= sorted_points[0].0 as f32 {
+        return sorted_points[0].1 as u32;
+    }
+    
+    if temp >= sorted_points[sorted_points.len() - 1].0 as f32 {
+        return sorted_points[sorted_points.len() - 1].1 as u32;
+    }
+    
+    for i in 0..sorted_points.len() - 1 {
+        let (temp1, speed1) = sorted_points[i];
+        let (temp2, speed2) = sorted_points[i + 1];
+        
+        if temp >= temp1 as f32 && temp <= temp2 as f32 {
+            let ratio = (temp - temp1 as f32) / (temp2 as f32 - temp1 as f32);
+            let speed = speed1 as f32 + ratio * (speed2 as f32 - speed1 as f32);
+            return speed as u32;
+        }
+    }
+    
+    50
+}
+
+pub fn set_webcam_state(enabled: bool) -> Result<()> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Webcam control not available"));
+    }
+    
+    let io = TuxedoIo::new()?;
+    io.set_webcam_state(enabled)?;
+    
+    log::info!("Set webcam to: {}", if enabled { "enabled" } else { "disabled" });
+    Ok(())
+}
+
+pub fn get_webcam_state() -> Result<bool> {
+    if !TuxedoIo::is_available() {
+        return Err(anyhow!("Webcam state not available"));
+    }
+    
+    let io = TuxedoIo::new()?;
+    io.get_webcam_state()
+}
+
+fn find_keyboard_backlight_path() -> Option<String> {
+    let possible_paths = vec![
+        "/sys/class/leds/rgb:kbd_backlight",
+        "/sys/class/leds/tuxedo::kbd_backlight",
+        "/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight",
+        "/sys/class/leds/asus::kbd_backlight",
+    ];
+    
+    for path in possible_paths {
+        let brightness_path = format!("{}/brightness", path);
+        if Path::new(&brightness_path).exists() {
+            log::info!("Found keyboard backlight at: {}", path);
+            return Some(path.to_string());
+        }
+    }
+    
+    log::warn!("No keyboard backlight found");
+    None
+}
+
+pub fn set_energy_performance_preference(epp: &str) -> Result<()> {
+    let cpu_count = get_cpu_count()?;
+    
+    let valid_values = ["performance", "balance_performance", "balance_power", "power", 
+                       "default", "balance-performance", "balance-power"];
+    if !valid_values.contains(&epp) {
+        return Err(anyhow!("Invalid EPP value: {}", epp));
+    }
+    
+    for i in 0..cpu_count {
+        let path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/energy_performance_preference", i);
+        if Path::new(&path).exists() {
+            fs::write(&path, epp)
+                .map_err(|e| anyhow!("Failed to set EPP for CPU {}: {}", i, e))?;
+        }
+    }
+    
+    log::info!("Set energy performance preference to: {}", epp);
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct RgbKeyboardControl {
+    base_path: String,
+}
+
+impl RgbKeyboardControl {
+    pub fn new() -> Result<Self> {
+        let base_path = Self::find_keyboard_backlight_path()?;
+        Ok(Self { base_path })
+    }
+    
+    pub fn is_available() -> bool {
+        Self::find_keyboard_backlight_path().is_ok()
+    }
+    
+    fn find_keyboard_backlight_path() -> Result<String> {
+        let possible_paths = vec![
+            "/sys/class/leds/rgb:kbd_backlight",
+            "/sys/class/leds/tuxedo::kbd_backlight",
+            "/sys/devices/platform/tuxedo_keyboard/leds/rgb:kbd_backlight",
+            "/sys/class/leds/asus::kbd_backlight",
+        ];
+        
+        for path in possible_paths {
+            let brightness_path = format!("{}/brightness", path);
+            if Path::new(&brightness_path).exists() {
+                log::info!("Found keyboard backlight at: {}", path);
+                return Ok(path.to_string());
+            }
+        }
+        
+        Err(anyhow!("No RGB keyboard backlight found"))
+    }
+    
+    /// Set RGB color for keyboard backlight
+    pub fn set_color(&self, red: u8, green: u8, blue: u8) -> Result<()> {
+        let color_path = format!("{}/multi_intensity", self.base_path);
+        if !Path::new(&color_path).exists() {
+            return Err(anyhow!("RGB control not available"));
+        }
+        
+        let color_str = format!("{} {} {}", red, green, blue);
+        fs::write(&color_path, color_str)?;
+        
+        log::info!("Set keyboard RGB color: ({}, {}, {})", red, green, blue);
+        Ok(())
+    }
+    
+    /// Set keyboard brightness (0-100%)
+    pub fn set_brightness(&self, brightness: u8) -> Result<()> {
+        let brightness_path = format!("{}/brightness", self.base_path);
+        let max_brightness_path = format!("{}/max_brightness", self.base_path);
+        
+        let max_brightness: u32 = if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+            max_str.trim().parse().unwrap_or(255)
+        } else {
+            255
+        };
+        
+        let actual_brightness = ((brightness as u32) * max_brightness) / 100;
+        fs::write(&brightness_path, actual_brightness.to_string())?;
+        
+        log::info!("Set keyboard brightness to {}%", brightness);
+        Ok(())
+    }
+    
+    /// Get current brightness (0-100%)
+    pub fn get_brightness(&self) -> Result<u8> {
+        let brightness_path = format!("{}/brightness", self.base_path);
+        let max_brightness_path = format!("{}/max_brightness", self.base_path);
+        
+        let current: u32 = fs::read_to_string(&brightness_path)?
+            .trim()
+            .parse()?;
+        
+        let max: u32 = fs::read_to_string(&max_brightness_path)?
+            .trim()
+            .parse()
+            .unwrap_or(255);
+        
+        let percent = ((current * 100) / max) as u8;
+        Ok(percent)
+    }
+    
+    /// Set keyboard mode (if supported)
+    pub fn set_mode(&self, mode: &tuxedo_common::types::KeyboardMode) -> Result<()> {
+        use tuxedo_common::types::KeyboardMode;
+        match mode {
+            KeyboardMode::SingleColor { r, g, b, brightness } => {
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
+            }
+            KeyboardMode::Breathe { r, g, b, brightness, speed } => {
+                // Some keyboards support breathing mode via sysfs
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "breathing")?;
+                }
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
+                log::info!("Set breathing mode with speed {}", speed);
+            }
+            KeyboardMode::Wave { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "wave")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set wave mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Wave mode not supported"));
+                }
+            }
+            KeyboardMode::Cycle { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "cycle")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set cycle mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Cycle mode not supported"));
+                }
+            }
+            KeyboardMode::Dance { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "dance")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set dance mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Dance mode not supported"));
+                }
+            }
+            KeyboardMode::Flash { r, g, b, brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "flash")?;
+                }
+                self.set_color(*r, *g, *b)?;
+                self.set_brightness(*brightness)?;
+                log::info!("Set flash mode with speed {}", speed);
+            }
+            KeyboardMode::RandomColor { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "random")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set random color mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Random color mode not supported"));
+                }
+            }
+            KeyboardMode::Tempo { brightness, speed } => {
+                let mode_path = format!("{}/mode", self.base_path);
+                if Path::new(&mode_path).exists() {
+                    fs::write(&mode_path, "tempo")?;
+                    self.set_brightness(*brightness)?;
+                    log::info!("Set tempo mode with speed {}", speed);
+                } else {
+                    return Err(anyhow!("Tempo mode not supported"));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
