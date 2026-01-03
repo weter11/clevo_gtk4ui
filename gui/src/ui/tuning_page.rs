@@ -842,23 +842,29 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 
                 // Update curve on value change
                 let config_clone = config.clone();
-                let profile_name_clone = profile.name.clone();
-                let fan_id_copy = fan_id as u32;
-                let point_idx = i;
-                
-                let speed_spin_clone = speed_spin.clone();
-                temp_spin.connect_value_changed(move |temp_spin| {
-                    let temp_val = temp_spin.value() as u8;
-                    let speed_val = speed_spin_clone.value() as u8;
-                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
-                });
-                
-                let temp_spin_clone = temp_spin.clone();
-                speed_spin.connect_value_changed(move |speed_spin| {
-                    let temp_val = temp_spin_clone.value() as u8;
-                    let speed_val = speed_spin.value() as u8;
-                    update_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy, point_idx, temp_val, speed_val);
-                });
+let profile_name_clone = profile.name.clone();
+let fan_id_copy = fan_id as u32;
+let point_idx = i;
+
+// Clone for the first closure
+let config_for_temp = config_clone.clone();
+let profile_for_temp = profile_name_clone.clone();
+let speed_spin_clone = speed_spin.clone();
+temp_spin.connect_value_changed(move |temp_spin| {
+    let temp_val = temp_spin.value() as u8;
+    let speed_val = speed_spin_clone.value() as u8;
+    update_fan_curve_point(&config_for_temp, &profile_for_temp, fan_id_copy, point_idx, temp_val, speed_val);
+});
+
+// Clone for the second closure
+let config_for_speed = config_clone.clone();
+let profile_for_speed = profile_name_clone.clone();
+let temp_spin_clone = temp_spin.clone();
+speed_spin.connect_value_changed(move |speed_spin| {
+    let temp_val = temp_spin_clone.value() as u8;
+    let speed_val = speed_spin.value() as u8;
+    update_fan_curve_point(&config_for_speed, &profile_for_speed, fan_id_copy, point_idx, temp_val, speed_val);
+});
                 
                 expander.add_row(&point_row);
             }
