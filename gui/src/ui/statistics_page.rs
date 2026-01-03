@@ -931,7 +931,7 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
     for (_, row) in refs {
         row.set_visible(false);
     }
-    
+
     if let Some(client) = dbus_client.borrow().as_ref() {
         // Try new get_fan_info method first (includes temperature)
         match client.get_fan_info() {
@@ -939,25 +939,30 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                 for (idx, fan) in fans.iter().enumerate() {
                     if idx < refs.len() {
                         let (_, row) = &refs[idx];
-                        
+
                         if let Some(temp) = fan.temperature {
                             if fan.is_rpm {
-                                row.set_subtitle(&format!("{} RPM - {}°C", fan.rpm_or_percent, temp));
+                                row.set_subtitle(&format!(
+                                    "{} RPM - {}°C",
+                                    fan.rpm_or_percent, temp
+                                ));
                             } else {
-                                row.set_subtitle(&format!("{}% - {}°C", fan.rpm_or_percent, temp));
+                                row.set_subtitle(&format!(
+                                    "{}% - {}°C",
+                                    fan.rpm_or_percent, temp
+                                ));
                             }
+                        } else if fan.is_rpm {
+                            row.set_subtitle(&format!("{} RPM", fan.rpm_or_percent));
                         } else {
-                            if fan.is_rpm {
-                                row.set_subtitle(&format!("{} RPM", fan.rpm_or_percent));
-                            } else {
-                                row.set_subtitle(&format!("{}%", fan.rpm_or_percent));
-                            }
+                            row.set_subtitle(&format!("{}%", fan.rpm_or_percent));
                         }
-                        
+
                         row.set_visible(true);
                     }
                 }
             }
+
             Err(_) => {
                 // Fallback to old method
                 match client.get_fan_speeds() {
@@ -965,17 +970,21 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                         for (idx, (fan_id, speed)) in fans.iter().enumerate() {
                             if idx < refs.len() {
                                 let (_, row) = &refs[idx];
-                                
-                                // Detect if speed is RPM or percentage
-                                // Typically, RPM values are much larger than 100
+
                                 let is_rpm = *speed > 200;
-                                
+
                                 match client.get_fan_temperature(*fan_id) {
                                     Ok(temp) => {
                                         if is_rpm {
-                                            row.set_subtitle(&format!("{} RPM - {}°C", speed, temp));
+                                            row.set_subtitle(&format!(
+                                                "{} RPM - {}°C",
+                                                speed, temp
+                                            ));
                                         } else {
-                                            row.set_subtitle(&format!("{}% - {}°C", speed, temp));
+                                            row.set_subtitle(&format!(
+                                                "{}% - {}°C",
+                                                speed, temp
+                                            ));
                                         }
                                     }
                                     Err(_) => {
@@ -986,41 +995,54 @@ fn update_fans_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient
                                         }
                                     }
                                 }
-                                
+
                                 row.set_visible(true);
                             }
                         }
+                    }
+
                     Err(_) => {
-                // Fallback to reading from sysfs
-                if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
-                    let mut fan_idx = 0;
-                    for entry in entries.flatten() {
-                        for i in 1..10 {
-                            let fan_input = format!("fan{}_input", i);
-                            let fan_path = entry.path().join(&fan_input);
-                            
-                            if let Ok(speed) = std::fs::read_to_string(&fan_path) {
-                                if let Ok(rpm) = speed.trim().parse::<u32>() {
-                                    if rpm > 0 && fan_idx < refs.len() {
-                                        let (_, row) = &refs[fan_idx];
-                                        
-                                        // Check for temperature sensor
-                                        let temp_input = format!("temp{}_input", i);
-                                        let temp_path = entry.path().join(&temp_input);
-                                        
-                                        if let Ok(temp_str) = std::fs::read_to_string(&temp_path) {
-                                            if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
-                                                let temp_c = temp_millideg as f32 / 1000.0;
-                                                row.set_subtitle(&format!("{} RPM - {:.1}°C", rpm, temp_c));
-                                            } else {
-                                                row.set_subtitle(&format!("{} RPM", rpm));
+                        // Fallback to reading from sysfs
+                        if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
+                            let mut fan_idx = 0;
+
+                            for entry in entries.flatten() {
+                                for i in 1..10 {
+                                    let fan_path =
+                                        entry.path().join(format!("fan{}_input", i));
+
+                                    if let Ok(speed) = std::fs::read_to_string(&fan_path) {
+                                        if let Ok(rpm) = speed.trim().parse::<u32>() {
+                                            if rpm > 0 && fan_idx < refs.len() {
+                                                let (_, row) = &refs[fan_idx];
+
+                                                let temp_path = entry
+                                                    .path()
+                                                    .join(format!("temp{}_input", i));
+
+                                                if let Ok(temp_str) =
+                                                    std::fs::read_to_string(&temp_path)
+                                                {
+                                                    if let Ok(temp_millideg) =
+                                                        temp_str.trim().parse::<i32>()
+                                                    {
+                                                        let temp_c =
+                                                            temp_millideg as f32 / 1000.0;
+                                                        row.set_subtitle(&format!(
+                                                            "{} RPM - {:.1}°C",
+                                                            rpm, temp_c
+                                                        ));
+                                                    } else {
+                                                        row.set_subtitle(&format!("{} RPM", rpm));
+                                                    }
+                                                } else {
+                                                    row.set_subtitle(&format!("{} RPM", rpm));
+                                                }
+
+                                                row.set_visible(true);
+                                                fan_idx += 1;
                                             }
-                                        } else {
-                                            row.set_subtitle(&format!("{} RPM", rpm));
                                         }
-                                        
-                                        row.set_visible(true);
-                                        fan_idx += 1;
                                     }
                                 }
                             }
