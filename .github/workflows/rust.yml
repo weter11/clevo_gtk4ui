@@ -28,7 +28,8 @@ jobs:
             libdbus-1-dev \
             pkg-config \
             libgtk-4-dev \
-            libadwaita-1-dev
+            libadwaita-1-dev \
+            libglib2.0-dev
 
     - name: Clean the project
       run: cargo clean 
