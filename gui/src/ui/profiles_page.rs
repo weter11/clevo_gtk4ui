@@ -198,7 +198,7 @@ fn get_toast_overlay(window: &adw::ApplicationWindow) -> Option<adw::ToastOverla
 }
 
 fn find_toast_overlay_recursive(widget: &gtk::Widget) -> Option<adw::ToastOverlay> {
-    if let Ok(overlay) = widget.downcast_ref::<adw::ToastOverlay>() {
+    if let Some(overlay) = widget.downcast_ref::<adw::ToastOverlay>() {
         return Some(overlay.clone());
     }
     
