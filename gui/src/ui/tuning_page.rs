@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::config::Config;
 use crate::dbus_client::DbusClient;
-use tuxedo_common::types::Profile;
+use tuxedo_common::types::{FanCurve, Profile};
 
 pub fn create_page(
     config: Rc<RefCell<Config>>,
@@ -176,7 +176,7 @@ fn create_tdp_section(
 fn create_cpu_tuning_section(
     profile: &Profile,
     config: Rc<RefCell<Config>>,
-    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    _dbus_client: Rc<RefCell<Option<DbusClient>>>,
     cpu_info: Option<tuxedo_common::types::CpuInfo>,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
@@ -640,7 +640,7 @@ fn add_brightness_control(
     brightness: u8,
     config: Rc<RefCell<Config>>,
     profile_name: String,
-    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    _dbus_client: Rc<RefCell<Option<DbusClient>>>,
 ) {
     let bright_row = adw::ActionRow::builder().title("Brightness").build();
     let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
@@ -944,7 +944,7 @@ pub fn create_fan_curve_editor(
     fan_id: u32,
     current_curve: &FanCurve,
     config: Rc<RefCell<Config>>,
-) -> gtk4::Box {
+) -> gtk::Box {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
     
     let title = gtk::Label::new(Some(&format!("Fan {} Curve", fan_id)));
