@@ -69,74 +69,111 @@ impl TuxedoIo {
             .read(true)
             .write(true)
             .open(TUXEDO_IO_DEVICE)?;
-        
+
         let interface = Self::detect_interface(&device)?;
         let fan_count = Self::detect_fan_count(&device, interface)?;
-        
+
         Ok(TuxedoIo {
             device,
             interface,
             fan_count,
         })
     }
-    
+
     pub fn is_available() -> bool {
         std::path::Path::new(TUXEDO_IO_DEVICE).exists()
     }
-    
+
     pub fn get_interface(&self) -> HardwareInterface {
         self.interface
     }
-    
+
     pub fn get_fan_count(&self) -> u32 {
         self.fan_count
     }
-    
+
+    fn clevo_raw_to_percent(raw: u8) -> u32 {
+        // Clevo returns raw 0..255
+        ((raw as u32 * 100) + 127) / 255
+    }
+
+    fn clevo_percent_to_raw(percent: u32) -> u8 {
+        let p = percent.min(100);
+        (((p * 255) + 50) / 100) as u8
+    }
+
     fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
         let fd = device.as_raw_fd();
-        
+
         let mut clevo_check: i32 = 0;
         let mut uniwill_check: i32 = 0;
-        
-        unsafe {
-            let _ = ioctl_hwcheck_cl(fd, &mut clevo_check);
-            let _ = ioctl_hwcheck_uw(fd, &mut uniwill_check);
-        }
-        
+
+        let cl_res = unsafe { ioctl_hwcheck_cl(fd, &mut clevo_check) };
+        let uw_res = unsafe { ioctl_hwcheck_uw(fd, &mut uniwill_check) };
+
+        log::debug!(
+            "tuxedo_io hwcheck: clevo={:?} val={}, uniwill={:?} val={}",
+            cl_res,
+            clevo_check,
+            uw_res,
+            uniwill_check
+        );
+
         if clevo_check == 1 {
-            Ok(HardwareInterface::Clevo)
-        } else if uniwill_check == 1 {
-            Ok(HardwareInterface::Uniwill)
-        } else {
-            Ok(HardwareInterface::None)
+            return Ok(HardwareInterface::Clevo);
         }
+        if uniwill_check == 1 {
+            return Ok(HardwareInterface::Uniwill);
+        }
+
+        // Fallback probing: some systems don't report hwcheck==1 reliably.
+        log::warn!("tuxedo_io hwcheck did not identify interface; probing fan ioctls...");
+
+        // Probe clevo faninfo ioctl
+        let mut probe: i32 = 0;
+        if unsafe { ioctl_cl_faninfo1(fd, &mut probe) }.is_ok() {
+            log::info!("tuxedo_io probe: Clevo faninfo ioctl succeeded; assuming Clevo interface");
+            return Ok(HardwareInterface::Clevo);
+        } else {
+            log::debug!("tuxedo_io probe: Clevo faninfo ioctl failed");
+        }
+
+        // Probe uniwill fanspeed ioctl
+        probe = 0;
+        if unsafe { ioctl_uw_fanspeed(fd, &mut probe) }.is_ok() {
+            log::info!("tuxedo_io probe: Uniwill fanspeed ioctl succeeded; assuming Uniwill interface");
+            return Ok(HardwareInterface::Uniwill);
+        } else {
+            log::debug!("tuxedo_io probe: Uniwill fanspeed ioctl failed");
+        }
+
+        Ok(HardwareInterface::None)
     }
-    
+
     fn detect_fan_count(device: &std::fs::File, interface: HardwareInterface) -> Result<u32> {
         let fd = device.as_raw_fd();
-        
+
         match interface {
             HardwareInterface::Clevo => {
-                // Try reading all 3 fan infos
+                // Try reading all 3 fan infos; treat ioctl success as "fan exists"
                 let mut count = 0;
                 let mut result: i32 = 0;
-                
+
                 unsafe {
-                    if ioctl_cl_faninfo1(fd, &mut result).is_ok() && result != 0 {
+                    if ioctl_cl_faninfo1(fd, &mut result).is_ok() {
                         count += 1;
                     }
-                    if ioctl_cl_faninfo2(fd, &mut result).is_ok() && result != 0 {
+                    if ioctl_cl_faninfo2(fd, &mut result).is_ok() {
                         count += 1;
                     }
-                    if ioctl_cl_faninfo3(fd, &mut result).is_ok() && result != 0 {
+                    if ioctl_cl_faninfo3(fd, &mut result).is_ok() {
                         count += 1;
                     }
                 }
-                
+
                 Ok(count)
             }
             HardwareInterface::Uniwill => {
-                // Uniwill typically has 2 fans
                 let mut result: i32 = 0;
                 unsafe {
                     if ioctl_uw_fanspeed(fd, &mut result).is_ok() {
@@ -152,68 +189,101 @@ impl TuxedoIo {
             HardwareInterface::None => Ok(0),
         }
     }
-    
+
     // Fan control methods
     pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
-        
+
         match self.interface {
             HardwareInterface::Clevo => {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => { let _ = ioctl_cl_faninfo1(fd, &mut result)?; }
-                        1 => { let _ = ioctl_cl_faninfo2(fd, &mut result)?; }
-                        2 => { let _ = ioctl_cl_faninfo3(fd, &mut result)?; }
+                        0 => {
+                            let _ = ioctl_cl_faninfo1(fd, &mut result)?;
+                        }
+                        1 => {
+                            let _ = ioctl_cl_faninfo2(fd, &mut result)?;
+                        }
+                        2 => {
+                            let _ = ioctl_cl_faninfo3(fd, &mut result)?;
+                        }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
-                // Extract speed from result (lower byte is speed)
-                Ok((result & 0xFF) as u32)
+                // Clevo: lower byte is raw 0..255 => convert to percent 0..100
+                let raw = (result & 0xFF) as u8;
+                Ok(Self::clevo_raw_to_percent(raw))
             }
             HardwareInterface::Uniwill => {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => { let _ = ioctl_uw_fanspeed(fd, &mut result)?; }
-                        1 => { let _ = ioctl_uw_fanspeed2(fd, &mut result)?; }
+                        0 => {
+                            let _ = ioctl_uw_fanspeed(fd, &mut result)?;
+                        }
+                        1 => {
+                            let _ = ioctl_uw_fanspeed2(fd, &mut result)?;
+                        }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
+                // NOTE: uniwill is raw-ish; existing code uses 0..200 elsewhere.
                 Ok(result as u32)
             }
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
     }
-    
-    pub fn set_fan_speed(&self, fan_id: u32, speed: u32) -> Result<()> {
+
+    pub fn set_fan_speed(&self, fan_id: u32, speed_percent: u32) -> Result<()> {
         let fd = self.device.as_raw_fd();
-        
+
         match self.interface {
             HardwareInterface::Clevo => {
-                // Clevo sets all fans at once with packed value
-                let mut current_speeds = [0u32; 3];
+                // Clevo sets all fans at once with packed RAW values (0..255)
+                let mut current_raw = [0u8; 3];
+
+                // Read current raw speeds from faninfo so we only update one fan
                 for i in 0..self.fan_count.min(3) {
-                    current_speeds[i as usize] = self.get_fan_speed(i).unwrap_or(0);
+                    let mut result: i32 = 0;
+                    let ok = unsafe {
+                        match i {
+                            0 => ioctl_cl_faninfo1(fd, &mut result).is_ok(),
+                            1 => ioctl_cl_faninfo2(fd, &mut result).is_ok(),
+                            2 => ioctl_cl_faninfo3(fd, &mut result).is_ok(),
+                            _ => false,
+                        }
+                    };
+                    if ok {
+                        current_raw[i as usize] = (result & 0xFF) as u8;
+                    }
                 }
-                
-                current_speeds[fan_id as usize] = speed.min(100);
-                
-                let packed: i32 = (current_speeds[0] | 
-                                   (current_speeds[1] << 8) | 
-                                   (current_speeds[2] << 16)) as i32;
-                
+
+                if fan_id >= 3 {
+                    return Err(anyhow!("Invalid fan ID"));
+                }
+
+                current_raw[fan_id as usize] = Self::clevo_percent_to_raw(speed_percent);
+
+                let packed: i32 = (current_raw[0] as i32)
+                    | ((current_raw[1] as i32) << 8)
+                    | ((current_raw[2] as i32) << 16);
+
                 unsafe {
                     ioctl_cl_fanspeed(fd, &packed)?;
                 }
                 Ok(())
             }
             HardwareInterface::Uniwill => {
-                let speed_val = speed.min(200) as i32; // Uniwill uses 0-200 range
+                let speed_val = speed_percent.min(200) as i32; // keep existing behavior for now
                 unsafe {
                     match fan_id {
-                        0 => { let _ = ioctl_uw_fanspeed_w(fd, &speed_val)?; }
-                        1 => { let _ = ioctl_uw_fanspeed2_w(fd, &speed_val)?; }
+                        0 => {
+                            let _ = ioctl_uw_fanspeed_w(fd, &speed_val)?;
+                        }
+                        1 => {
+                            let _ = ioctl_uw_fanspeed2_w(fd, &speed_val)?;
+                        }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -222,10 +292,10 @@ impl TuxedoIo {
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
     }
-    
+
     pub fn set_fan_auto(&self) -> Result<()> {
         let fd = self.device.as_raw_fd();
-        
+
         match self.interface {
             HardwareInterface::Clevo => {
                 let auto_val: i32 = 1;
@@ -243,19 +313,25 @@ impl TuxedoIo {
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
     }
-    
+
     pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
-        
+
         match self.interface {
             HardwareInterface::Clevo => {
                 // Clevo returns temperature in upper byte of faninfo
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => { let _ = ioctl_cl_faninfo1(fd, &mut result)?; }
-                        1 => { let _ = ioctl_cl_faninfo2(fd, &mut result)?; }
-                        2 => { let _ = ioctl_cl_faninfo3(fd, &mut result)?; }
+                        0 => {
+                            let _ = ioctl_cl_faninfo1(fd, &mut result)?;
+                        }
+                        1 => {
+                            let _ = ioctl_cl_faninfo2(fd, &mut result)?;
+                        }
+                        2 => {
+                            let _ = ioctl_cl_faninfo3(fd, &mut result)?;
+                        }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -265,8 +341,12 @@ impl TuxedoIo {
                 let mut result: i32 = 0;
                 unsafe {
                     match fan_id {
-                        0 => { let _ = ioctl_uw_fan_temp(fd, &mut result)?; }
-                        1 => { let _ = ioctl_uw_fan_temp2(fd, &mut result)?; }
+                        0 => {
+                            let _ = ioctl_uw_fan_temp(fd, &mut result)?;
+                        }
+                        1 => {
+                            let _ = ioctl_uw_fan_temp2(fd, &mut result)?;
+                        }
                         _ => return Err(anyhow!("Invalid fan ID")),
                     }
                 }
@@ -275,6 +355,9 @@ impl TuxedoIo {
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
     }
+
+    // (rest of file unchanged)
+}
     
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
