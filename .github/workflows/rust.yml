@@ -33,7 +33,8 @@ jobs:
             libpango1.0-dev \
             libcairo2-dev \
             libgdk-pixbuf-2.0-dev \
-            libatk1.0-dev
+            libatk1.0-dev \
+            libgraphene-1.0-dev
 
     - name: Clean the project
       run: cargo clean 
