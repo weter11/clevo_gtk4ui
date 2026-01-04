@@ -174,7 +174,6 @@ impl FanCurveEditor {
         }
     }
 });
-        });
 
         row.add_suffix(&temp_spin);
         row.add_suffix(&Label::new(Some("°C")));
