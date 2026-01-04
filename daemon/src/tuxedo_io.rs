@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
+use nix::errno::Errno;
+use nix::libc;
+use std::mem;
 
 const TUXEDO_IO_DEVICE: &str = "/dev/tuxedo_io";
 const IOCTL_MAGIC: u8 = 0xEC;
@@ -10,13 +13,14 @@ const MAGIC_READ_UW: u8 = IOCTL_MAGIC + 3;
 const MAGIC_WRITE_UW: u8 = IOCTL_MAGIC + 4;
 
 // Hardware check ioctls
-nix::ioctl_read!(ioctl_hwcheck_cl, IOCTL_MAGIC, 0x05, i32);
-nix::ioctl_read!(ioctl_hwcheck_uw, IOCTL_MAGIC, 0x06, i32);
+// nix::ioctl_read!(ioctl_cl_hw_interface_id, MAGIC_READ_CL, 0x00, [u8; 30]);
+// nix::ioctl_read!(ioctl_hwcheck_cl, IOCTL_MAGIC, 0x05, i32);
+// nix::ioctl_read!(ioctl_hwcheck_uw, IOCTL_MAGIC, 0x06, i32);
 
 // Clevo read ioctls
-nix::ioctl_read!(ioctl_cl_faninfo1, MAGIC_READ_CL, 0x10, i32);
-nix::ioctl_read!(ioctl_cl_faninfo2, MAGIC_READ_CL, 0x11, i32);
-nix::ioctl_read!(ioctl_cl_faninfo3, MAGIC_READ_CL, 0x12, i32);
+// nix::ioctl_read!(ioctl_cl_faninfo1, MAGIC_READ_CL, 0x10, i32);
+// nix::ioctl_read!(ioctl_cl_faninfo2, MAGIC_READ_CL, 0x11, i32);
+// nix::ioctl_read!(ioctl_cl_faninfo3, MAGIC_READ_CL, 0x12, i32);
 nix::ioctl_read!(ioctl_cl_webcam_sw, MAGIC_READ_CL, 0x13, i32);
 
 // Clevo write ioctls
@@ -26,10 +30,10 @@ nix::ioctl_write_ptr!(ioctl_cl_webcam_sw_w, MAGIC_WRITE_CL, 0x12, i32);
 nix::ioctl_write_ptr!(ioctl_cl_perf_profile, MAGIC_WRITE_CL, 0x15, i32);
 
 // Uniwill read ioctls
-nix::ioctl_read!(ioctl_uw_fanspeed, MAGIC_READ_UW, 0x10, i32);
-nix::ioctl_read!(ioctl_uw_fanspeed2, MAGIC_READ_UW, 0x11, i32);
-nix::ioctl_read!(ioctl_uw_fan_temp, MAGIC_READ_UW, 0x12, i32);
-nix::ioctl_read!(ioctl_uw_fan_temp2, MAGIC_READ_UW, 0x13, i32);
+// nix::ioctl_read!(ioctl_uw_fanspeed, MAGIC_READ_UW, 0x10, i32);
+// nix::ioctl_read!(ioctl_uw_fanspeed2, MAGIC_READ_UW, 0x11, i32);
+// nix::ioctl_read!(ioctl_uw_fan_temp, MAGIC_READ_UW, 0x12, i32);
+// nix::ioctl_read!(ioctl_uw_fan_temp2, MAGIC_READ_UW, 0x13, i32);
 nix::ioctl_read!(ioctl_uw_tdp0, MAGIC_READ_UW, 0x18, i32);
 nix::ioctl_read!(ioctl_uw_tdp1, MAGIC_READ_UW, 0x19, i32);
 nix::ioctl_read!(ioctl_uw_tdp2, MAGIC_READ_UW, 0x1a, i32);
@@ -102,53 +106,59 @@ impl TuxedoIo {
         (((p * 255) + 50) / 100) as u8
     }
 
-    fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
-        let fd = device.as_raw_fd();
+    fn request_code_read_i32(id: u8, seq: u8) -> libc::c_ulong {
+    nix::request_code_read!(id, seq, mem::size_of::<*mut i32>()) as libc::c_ulong
+}
 
-        let mut clevo_check: i32 = 0;
-        let mut uniwill_check: i32 = 0;
+fn ioctl_read_i32(fd: i32, request_code: libc::c_ulong) -> Result<i32> {
+    let mut data: i32 = 0;
+    let res = unsafe { libc::ioctl(fd, request_code, &mut data as *mut i32) };
+    Errno::result(res)
+        .map_err(|e| anyhow!("ioctl read failed (req=0x{:x}): {}", request_code, e))?;
+    Ok(data)
+}
 
-        let cl_res = unsafe { ioctl_hwcheck_cl(fd, &mut clevo_check) };
-        let uw_res = unsafe { ioctl_hwcheck_uw(fd, &mut uniwill_check) };
+fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
+    let fd = device.as_raw_fd();
 
-        log::debug!(
-            "tuxedo_io hwcheck: clevo={:?} val={}, uniwill={:?} val={}",
-            cl_res,
-            clevo_check,
-            uw_res,
-            uniwill_check
-        );
+    let cl_res = ioctl_read_i32(fd, request_code_read_i32(IOCTL_MAGIC, 0x05));
+    let uw_res = ioctl_read_i32(fd, request_code_read_i32(IOCTL_MAGIC, 0x06));
 
-        if clevo_check == 1 {
-            return Ok(HardwareInterface::Clevo);
-        }
-        if uniwill_check == 1 {
-            return Ok(HardwareInterface::Uniwill);
-        }
+    log::debug!(
+        "tuxedo_io hwcheck (tuxedo-rs sized): clevo={:?}, uniwill={:?}",
+        cl_res,
+        uw_res
+    );
 
-        // Fallback probing: some systems don't report hwcheck==1 reliably.
-        log::warn!("tuxedo_io hwcheck did not identify interface; probing fan ioctls...");
-
-        // Probe clevo faninfo ioctl
-        let mut probe: i32 = 0;
-        if unsafe { ioctl_cl_faninfo1(fd, &mut probe) }.is_ok() {
-            log::info!("tuxedo_io probe: Clevo faninfo ioctl succeeded; assuming Clevo interface");
-            return Ok(HardwareInterface::Clevo);
-        } else {
-            log::debug!("tuxedo_io probe: Clevo faninfo ioctl failed");
-        }
-
-        // Probe uniwill fanspeed ioctl
-        probe = 0;
-        if unsafe { ioctl_uw_fanspeed(fd, &mut probe) }.is_ok() {
-            log::info!("tuxedo_io probe: Uniwill fanspeed ioctl succeeded; assuming Uniwill interface");
-            return Ok(HardwareInterface::Uniwill);
-        } else {
-            log::debug!("tuxedo_io probe: Uniwill fanspeed ioctl failed");
-        }
-
-        Ok(HardwareInterface::None)
+    if matches!(cl_res, Ok(1)) {
+        return Ok(HardwareInterface::Clevo);
     }
+    if matches!(uw_res, Ok(1)) {
+        return Ok(HardwareInterface::Uniwill);
+    }
+
+    log::warn!("tuxedo_io hwcheck did not identify interface; probing fan ioctls...");
+
+    // Probe clevo faninfo
+    let probe_cl = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_CL, 0x10));
+    if probe_cl.is_ok() {
+        log::info!("tuxedo_io probe: Clevo faninfo ioctl succeeded; assuming Clevo interface");
+        return Ok(HardwareInterface::Clevo);
+    } else {
+        log::debug!("tuxedo_io probe: Clevo faninfo ioctl failed: {:?}", probe_cl);
+    }
+
+    // Probe uniwill fanspeed
+    let probe_uw = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_UW, 0x10));
+    if probe_uw.is_ok() {
+        log::info!("tuxedo_io probe: Uniwill fanspeed ioctl succeeded; assuming Uniwill interface");
+        return Ok(HardwareInterface::Uniwill);
+    } else {
+        log::debug!("tuxedo_io probe: Uniwill fanspeed ioctl failed: {:?}", probe_uw);
+    }
+
+    Ok(HardwareInterface::None)
+}
 
     fn detect_fan_count(device: &std::fs::File, interface: HardwareInterface) -> Result<u32> {
         let fd = device.as_raw_fd();
@@ -191,49 +201,41 @@ impl TuxedoIo {
     }
 
     // Fan control methods
-    pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
-        let fd = self.device.as_raw_fd();
+pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
+    let fd = self.device.as_raw_fd();
 
-        match self.interface {
-            HardwareInterface::Clevo => {
-                let mut result: i32 = 0;
-                unsafe {
-                    match fan_id {
-                        0 => {
-                            let _ = ioctl_cl_faninfo1(fd, &mut result)?;
-                        }
-                        1 => {
-                            let _ = ioctl_cl_faninfo2(fd, &mut result)?;
-                        }
-                        2 => {
-                            let _ = ioctl_cl_faninfo3(fd, &mut result)?;
-                        }
-                        _ => return Err(anyhow!("Invalid fan ID")),
-                    }
-                }
-                // Clevo: lower byte is raw 0..255 => convert to percent 0..100
-                let raw = (result & 0xFF) as u8;
-                Ok(Self::clevo_raw_to_percent(raw))
-            }
-            HardwareInterface::Uniwill => {
-                let mut result: i32 = 0;
-                unsafe {
-                    match fan_id {
-                        0 => {
-                            let _ = ioctl_uw_fanspeed(fd, &mut result)?;
-                        }
-                        1 => {
-                            let _ = ioctl_uw_fanspeed2(fd, &mut result)?;
-                        }
-                        _ => return Err(anyhow!("Invalid fan ID")),
-                    }
-                }
-                // NOTE: uniwill is raw-ish; existing code uses 0..200 elsewhere.
-                Ok(result as u32)
-            }
-            HardwareInterface::None => Err(anyhow!("No hardware interface available")),
+    match self.interface {
+        HardwareInterface::Clevo => {
+            let seq = match fan_id {
+                0 => 0x10,
+                1 => 0x11,
+                2 => 0x12,
+                _ => return Err(anyhow!("Invalid fan ID")),
+            };
+
+            let raw = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_CL, seq))?;
+            log::debug!(
+                "Clevo faninfo{} raw result=0x{:08x} ({})",
+                fan_id,
+                raw as u32,
+                raw
+            );
+
+            let speed_raw = (raw & 0xFF) as u8; // 0..255
+            Ok(Self::clevo_raw_to_percent(speed_raw))
         }
+        HardwareInterface::Uniwill => {
+            let seq = match fan_id {
+                0 => 0x10,
+                1 => 0x11,
+                _ => return Err(anyhow!("Invalid fan ID")),
+            };
+            let val = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_UW, seq))?;
+            Ok(val as u32)
+        }
+        HardwareInterface::None => Err(anyhow!("No hardware interface available")),
     }
+}
 
     pub fn set_fan_speed(&self, fan_id: u32, speed_percent: u32) -> Result<()> {
         let fd = self.device.as_raw_fd();
@@ -314,62 +316,48 @@ impl TuxedoIo {
         }
     }
 
-    pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
-        let fd = self.device.as_raw_fd();
+pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
+    let fd = self.device.as_raw_fd();
 
-        match self.interface {
-    HardwareInterface::Clevo => {
-        // Clevo returns temperature in upper byte of faninfo
-        let mut result: i32 = 0;
-        unsafe {
-            match fan_id {
-                0 => {
-                    let _ = ioctl_cl_faninfo1(fd, &mut result)?;
-                    log::debug!(
-                        "Clevo faninfo1 raw result=0x{:08x} ({})",
-                        result as u32,
-                        result
-                    );
-                }
-                1 => {
-                    let _ = ioctl_cl_faninfo2(fd, &mut result)?;
-                    log::debug!(
-                        "Clevo faninfo2 raw result=0x{:08x} ({})",
-                        result as u32,
-                        result
-                    );
-                }
-                2 => {
-                    let _ = ioctl_cl_faninfo3(fd, &mut result)?;
-                    log::debug!(
-                        "Clevo faninfo3 raw result=0x{:08x} ({})",
-                        result as u32,
-                        result
-                    );
-                }
+    match self.interface {
+        HardwareInterface::Clevo => {
+            let seq = match fan_id {
+                0 => 0x10,
+                1 => 0x11,
+                2 => 0x12,
                 _ => return Err(anyhow!("Invalid fan ID")),
+            };
+
+            let raw = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_CL, seq))?;
+            log::debug!(
+                "Clevo faninfo{} raw result=0x{:08x} ({})",
+                fan_id,
+                raw as u32,
+                raw
+            );
+
+            // tuxedo-rs: temp2 is more consistently implemented
+            let temp2 = ((raw >> 16) & 0xFF) as u32;
+
+            // tuxedo-rs: if a fan is not available a low value is read out
+            if temp2 <= 1 {
+                return Err(anyhow!("Fan {} not available (temp2={})", fan_id, temp2));
             }
+
+            Ok(temp2)
         }
-        Ok(((result >> 8) & 0xFF) as u32)
-    }
-            HardwareInterface::Uniwill => {
-                let mut result: i32 = 0;
-                unsafe {
-                    match fan_id {
-                        0 => {
-                            let _ = ioctl_uw_fan_temp(fd, &mut result)?;
-                        }
-                        1 => {
-                            let _ = ioctl_uw_fan_temp2(fd, &mut result)?;
-                        }
-                        _ => return Err(anyhow!("Invalid fan ID")),
-                    }
-                }
-                Ok(result as u32)
-            }
-            HardwareInterface::None => Err(anyhow!("No hardware interface available")),
+        HardwareInterface::Uniwill => {
+            let seq = match fan_id {
+                0 => 0x12,
+                1 => 0x13,
+                _ => return Err(anyhow!("Invalid fan ID")),
+            };
+            let val = ioctl_read_i32(fd, request_code_read_i32(MAGIC_READ_UW, seq))?;
+            Ok(val as u32)
         }
+        HardwareInterface::None => Err(anyhow!("No hardware interface available")),
     }
+}
     
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
