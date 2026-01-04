@@ -371,14 +371,15 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
         match self.interface {
-            HardwareInterface::Clevo => {
-                // Clevo has fixed profiles
-                Ok(vec![
-                    "Power Saving".to_string(),
-                    "Balanced".to_string(),
-                    "Performance".to_string(),
-                ])
-            }
+        HardwareInterface::Clevo => {
+            // Clevo has 4 fixed profiles (0x00 to 0x03)
+            Ok(vec![
+                "quiet".to_string(),           // 0x00
+                "power_saving".to_string(),    // 0x01
+                "performance".to_string(),     // 0x02
+                "entertainment".to_string(),   // 0x03
+            ])
+        }
             HardwareInterface::Uniwill => {
                 let fd = self.device.as_raw_fd();
                 let mut result: i32 = 0;
@@ -404,15 +405,18 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
         
         match self.interface {
-            HardwareInterface::Clevo => {
-                let profile_val = (profile_id + 1) as i32; // Clevo uses 1-3
-                unsafe {
-                    ioctl_cl_perf_profile(fd, &profile_val)?;
-                }
-                Ok(())
+        HardwareInterface::Clevo => {
+            if profile_id > 3 {
+                return Err(anyhow!("Invalid profile ID: {}", profile_id));
             }
+            let profile_val = profile_id as i32;
+            unsafe {
+                ioctl_cl_perf_profile(fd, &profile_val)?;
+            }
+            Ok(())
+        }
             HardwareInterface::Uniwill => {
-                let profile_val = (profile_id + 1) as i32; // Uniwill also uses 1-3
+                let profile_val = (profile_id + 1) as i32; // Uniwill uses 1-3, so keep the +1
                 unsafe {
                     ioctl_uw_perf_prof(fd, &profile_val)?;
                 }
