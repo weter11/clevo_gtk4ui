@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{Box, Orientation, ScrolledWindow, Scale, Button};
+use gtk::{Box, Orientation, ScrolledWindow, Scale, Button, Label};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -22,20 +22,24 @@ pub fn create_page(
     let content = build_tuning_content(config.clone(), dbus_client.clone());
     scrolled.set_child(Some(&content));
     
-    let scrolled_weak = scrolled.downgrade();
+    // Only update the header label, not rebuild everything
+    let content_weak = content.downgrade();
     let config_clone = config.clone();
-    let dbus_clone = dbus_client.clone();
     let mut last_profile = config.borrow().data.current_profile.clone();
     
     gtk::glib::timeout_add_seconds_local(1, move || {
         let current_profile = config_clone.borrow().data.current_profile.clone();
         
         if current_profile != last_profile {
-            last_profile = current_profile;
+            last_profile = current_profile.clone();
             
-            if let Some(scrolled) = scrolled_weak.upgrade() {
-                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone());
-                scrolled.set_child(Some(&new_content));
+            // Only update the header label, don't rebuild
+            if let Some(content_box) = content_weak.upgrade() {
+                if let Some(first_child) = content_box.first_child() {
+                    if let Ok(header) = first_child.downcast::<Label>() {
+                        header.set_text(&format!("Editing Profile: {}", current_profile));
+                    }
+                }
             }
         }
         
@@ -64,7 +68,7 @@ fn build_tuning_content(
     };
     
     if let Some(profile) = current_profile {
-        let header = gtk::Label::new(Some(&format!("Editing Profile: {}", profile.name)));
+        let header = Label::new(Some(&format!("Editing Profile: {}", profile.name)));
         header.set_css_classes(&["title-2"]);
         main_box.append(&header);
         
@@ -125,12 +129,14 @@ fn build_tuning_content(
         button_box.append(&reset_button);
         main_box.append(&button_box);
     } else {
-        let error_label = gtk::Label::new(Some("No profile selected"));
+        let error_label = Label::new(Some("No profile selected"));
         main_box.append(&error_label);
     }
     
     main_box
 }
+
+// ... rest of the file remains the same ...
 
 fn create_tdp_section(
     profile: &Profile,
@@ -455,7 +461,6 @@ fn create_keyboard_tuning_section(
     
     group.add(&control_row);
     
-    // Mode selector
     let mode_row = adw::ComboRow::builder()
         .title("Backlight Mode")
         .build();
@@ -473,7 +478,6 @@ fn create_keyboard_tuning_section(
     let model = gtk::StringList::new(&modes.iter().map(|s| *s).collect::<Vec<_>>());
     mode_row.set_model(Some(&model));
     
-    // Set current mode
     let current_mode_idx = match &profile.keyboard_settings.mode {
         KeyboardMode::SingleColor { .. } => 0,
         KeyboardMode::Breathe { .. } => 1,
@@ -493,7 +497,6 @@ fn create_keyboard_tuning_section(
         let mode_idx = row.selected();
         let mut cfg = config_clone.borrow_mut();
         if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
-            // Update mode - keep existing values where possible
             prof.keyboard_settings.mode = match mode_idx {
                 0 => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
                 1 => KeyboardMode::Breathe { r: 255, g: 255, b: 255, brightness: 50, speed: 50 },
@@ -506,7 +509,6 @@ fn create_keyboard_tuning_section(
                 _ => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
             };
             
-            // REAL-TIME PREVIEW: Apply immediately via DBus
             if let Some(client) = dbus_clone.borrow().as_ref() {
                 let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
@@ -515,7 +517,6 @@ fn create_keyboard_tuning_section(
     
     group.add(&mode_row);
     
-    // Add controls based on current mode
     match &profile.keyboard_settings.mode {
         KeyboardMode::SingleColor { r, g, b, brightness } => {
             add_rgb_controls(&group, *r, *g, *b, *brightness, config.clone(), profile.name.clone(), dbus_client.clone());
@@ -584,7 +585,6 @@ fn add_rgb_controls(
     bright_row.add_suffix(&bright_scale);
     group.add(&bright_row);
     
-    // Connect value changed handlers
     let r_clone = r_scale.clone();
     let g_clone = g_scale.clone();
     let b_clone = b_scale.clone();
@@ -608,7 +608,6 @@ fn add_rgb_controls(
             
             let mut config = cfg.borrow_mut();
             if let Some(prof) = config.data.profiles.iter_mut().find(|p| p.name == pname) {
-                // Update the RGB values in the current mode
                 match &mut prof.keyboard_settings.mode {
                     KeyboardMode::SingleColor { r, g, b, brightness } => {
                         *r = r_val;
@@ -626,7 +625,6 @@ fn add_rgb_controls(
                     _ => {}
                 }
                 
-                // REAL-TIME PREVIEW: Apply immediately via DBus
                 if let Some(client) = dbus_clone.borrow().as_ref() {
                     let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
                 }
@@ -706,7 +704,6 @@ fn add_speed_control(
                 _ => {}
             }
             
-            // REAL-TIME PREVIEW: Apply immediately via DBus
             if let Some(client) = dbus_client.borrow().as_ref() {
                 let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
@@ -762,8 +759,6 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
 }
 
 fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
-    use tuxedo_common::types::FanCurve;
-    
     let group = adw::PreferencesGroup::builder()
         .title("Fans")
         .build();
@@ -786,11 +781,9 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
     
     group.add(&control_row);
     
-    // Add fan curve editors for each fan
     if profile.fan_settings.control_enabled {
-        // Get number of fans (default to 2 if curves don't exist)
         let fan_count = if profile.fan_settings.curves.is_empty() {
-            2  // Default assumption
+            2
         } else {
             profile.fan_settings.curves.len().max(1)
         };
@@ -801,7 +794,6 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 .find(|c| c.fan_id == fan_id as u32)
                 .cloned()
                 .unwrap_or_else(|| {
-                    // Default curve: 0°C->0%, 50°C->50%, 80°C->100%
                     FanCurve {
                         fan_id: fan_id as u32,
                         points: vec![(0, 0), (50, 50), (80, 100)],
@@ -813,7 +805,6 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 .subtitle(&format!("{} points", curve.points.len()))
                 .build();
             
-            // Add point controls
             for (i, (temp, speed)) in curve.points.iter().enumerate() {
                 let point_row = adw::ActionRow::builder()
                     .title(&format!("Point {}", i + 1))
@@ -823,7 +814,6 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 let temp_label = gtk::Label::new(Some("Temp (°C):"));
                 let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
                 temp_spin.set_value(*temp as f64);
-//                temp_spin.set_suffix(Some("°C"));
                 temp_spin.set_width_chars(5);
                 temp_box.append(&temp_label);
                 temp_box.append(&temp_spin);
@@ -832,7 +822,6 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 let speed_label = gtk::Label::new(Some("Speed (%):"));
                 let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
                 speed_spin.set_value(*speed as f64);
-//                speed_spin.set_suffix(Some("%"));
                 speed_spin.set_width_chars(5);
                 speed_box.append(&speed_label);
                 speed_box.append(&speed_spin);
@@ -840,36 +829,32 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 point_row.add_suffix(&temp_box);
                 point_row.add_suffix(&speed_box);
                 
-                // Update curve on value change
                 let config_clone = config.clone();
-let profile_name_clone = profile.name.clone();
-let fan_id_copy = fan_id as u32;
-let point_idx = i;
-
-// Clone for the first closure
-let config_for_temp = config_clone.clone();
-let profile_for_temp = profile_name_clone.clone();
-let speed_spin_clone = speed_spin.clone();
-temp_spin.connect_value_changed(move |temp_spin| {
-    let temp_val = temp_spin.value() as u8;
-    let speed_val = speed_spin_clone.value() as u8;
-    update_fan_curve_point(&config_for_temp, &profile_for_temp, fan_id_copy, point_idx, temp_val, speed_val);
-});
-
-// Clone for the second closure
-let config_for_speed = config_clone.clone();
-let profile_for_speed = profile_name_clone.clone();
-let temp_spin_clone = temp_spin.clone();
-speed_spin.connect_value_changed(move |speed_spin| {
-    let temp_val = temp_spin_clone.value() as u8;
-    let speed_val = speed_spin.value() as u8;
-    update_fan_curve_point(&config_for_speed, &profile_for_speed, fan_id_copy, point_idx, temp_val, speed_val);
-});
+                let profile_name_clone = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                
+                let config_for_temp = config_clone.clone();
+                let profile_for_temp = profile_name_clone.clone();
+                let speed_spin_clone = speed_spin.clone();
+                temp_spin.connect_value_changed(move |temp_spin| {
+                    let temp_val = temp_spin.value() as u8;
+                    let speed_val = speed_spin_clone.value() as u8;
+                    update_fan_curve_point(&config_for_temp, &profile_for_temp, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                let config_for_speed = config_clone.clone();
+                let profile_for_speed = profile_name_clone.clone();
+                let temp_spin_clone = temp_spin.clone();
+                speed_spin.connect_value_changed(move |speed_spin| {
+                    let temp_val = temp_spin_clone.value() as u8;
+                    let speed_val = speed_spin.value() as u8;
+                    update_fan_curve_point(&config_for_speed, &profile_for_speed, fan_id_copy, point_idx, temp_val, speed_val);
+                });
                 
                 expander.add_row(&point_row);
             }
             
-            // Add button to add new point
             let add_point_row = adw::ActionRow::builder()
                 .title("Add Point")
                 .build();
@@ -905,13 +890,11 @@ fn update_fan_curve_point(
 ) {
     let mut cfg = config.borrow_mut();
     if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
-        // Find or create the fan curve
         if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
             if point_idx < curve.points.len() {
                 curve.points[point_idx] = (temp, speed);
             }
         } else {
-            // Create new curve if it doesn't exist
             prof.fan_settings.curves.push(FanCurve {
                 fan_id,
                 points: vec![(temp, speed)],
@@ -928,7 +911,6 @@ fn add_fan_curve_point(
     let mut cfg = config.borrow_mut();
     if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
         if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id) {
-            // Add a new point with reasonable defaults
             let new_temp = if let Some((last_temp, _)) = curve.points.last() {
                 (*last_temp + 10).min(100)
             } else {
@@ -936,61 +918,10 @@ fn add_fan_curve_point(
             };
             curve.points.push((new_temp, 50));
         } else {
-            // Create new curve with one point
             prof.fan_settings.curves.push(FanCurve {
                 fan_id,
                 points: vec![(50, 50)],
             });
         }
     }
-}
-
-// Add to GUI for fan curve editor
-pub fn create_fan_curve_editor(
-    fan_id: u32,
-    current_curve: &FanCurve,
-    config: Rc<RefCell<Config>>,
-) -> gtk::Box {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    
-    let title = gtk::Label::new(Some(&format!("Fan {} Curve", fan_id)));
-    title.add_css_class("title-3");
-    container.append(&title);
-    
-    // Add visual curve editor here
-    // Users can add/remove points
-    // Show temperature on X axis, speed on Y axis
-    
-    let points_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    
-    for (i, (temp, speed)) in current_curve.points.iter().enumerate() {
-        let point_row = adw::ActionRow::builder()
-            .title(&format!("Point {}", i + 1))
-            .build();
-        
-        let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
-        temp_spin.set_value(*temp as f64);
-//        temp_spin.set_suffix(Some("°C"));
-        
-        let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
-        speed_spin.set_value(*speed as f64);
-//        speed_spin.set_suffix(Some("%"));
-        
-        let remove_btn = gtk::Button::from_icon_name("user-trash-symbolic");
-        remove_btn.add_css_class("destructive-action");
-        
-        point_row.add_suffix(&temp_spin);
-        point_row.add_suffix(&speed_spin);
-        point_row.add_suffix(&remove_btn);
-        
-        points_list.append(&point_row);
-    }
-    
-    container.append(&points_list);
-    
-    let add_point_btn = gtk::Button::with_label("Add Point");
-    add_point_btn.add_css_class("suggested-action");
-    container.append(&add_point_btn);
-    
-    container
 }
