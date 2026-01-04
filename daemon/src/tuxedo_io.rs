@@ -277,16 +277,22 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
             }
 
             HardwareInterface::Uniwill => {
-                let val = speed_percent.min(200) as i32;
-                unsafe {
-                    match fan_id {
-                        0 => ioctl_uw_fanspeed_w(fd, &val)?,
-                        1 => ioctl_uw_fanspeed2_w(fd, &val)?,
-                        _ => return Err(anyhow!("Invalid fan ID")),
-                    }
-                }
-                Ok(())
+    let val: i32 = speed_percent.min(200) as i32;
+
+    unsafe {
+        match fan_id {
+            0 => {
+                ioctl_uw_fanspeed_w(fd, &val)?;
             }
+            1 => {
+                ioctl_uw_fanspeed2_w(fd, &val)?;
+            }
+            _ => return Err(anyhow!("Invalid fan ID")),
+        }
+    }
+
+    Ok(())
+}
 
             HardwareInterface::None => Err(anyhow!("No hardware interface")),
         }
