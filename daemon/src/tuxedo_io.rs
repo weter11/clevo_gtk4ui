@@ -269,6 +269,14 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
                 let packed = (current_raw[0] as i32)
                     | ((current_raw[1] as i32) << 8)
                     | ((current_raw[2] as i32) << 16);
+                
+                    log::debug!(
+        "Writing Clevo packed raw: {:02x} {:02x} {:02x} (packed=0x{:06x})",
+        current_raw[0],
+        current_raw[1],
+        current_raw[2],
+        packed
+    );
 
                 unsafe {
                     ioctl_cl_fanspeed(fd, &packed)?;
