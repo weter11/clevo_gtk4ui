@@ -203,7 +203,7 @@ impl FanCurveEditor {
         row.add_suffix(&speed_box);
 
         // Delete button
-        let delete_btn = Button::from_icon_name("user-trash-symbolic");
+        let delete_btn = Button::from_icon_name("edit-delete-symbolic");
         delete_btn.add_css_class("destructive-action");
         delete_btn.set_valign(gtk::Align::Center);
         
