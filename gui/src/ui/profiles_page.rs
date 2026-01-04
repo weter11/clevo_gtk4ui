@@ -20,7 +20,6 @@ pub fn create_page(
         .hexpand(true)
         .build();
 
-    // Build once. Do NOT rebuild every second, it breaks Entry editing and button actions.
     let content = build_profiles_content(config.clone(), dbus_client.clone(), window.clone());
     scrolled.set_child(Some(&content));
 
@@ -116,48 +115,95 @@ fn build_profiles_content(
     create_group.add(&entry_row);
     
     let config_clone = config.clone();
+    let dbus_clone = dbus_client.clone();
     let entry_clone = entry.clone();
     let window_clone = window.clone();
-create_button.connect_clicked(move |_| {
-    let name = entry_clone.text().to_string();
-    if name.is_empty() {
-        return;
-    }
-
-    {
-        let mut cfg = config_clone.borrow_mut();
-
-        if cfg.data.profiles.iter().any(|p| p.name == name) {
-            // show toast...
+    let custom_group_weak = custom_group.downgrade();
+    let radio_group_rc = Rc::new(RefCell::new(radio_group));
+    
+    create_button.connect_clicked(move |_| {
+        let name = entry_clone.text().to_string();
+        if name.is_empty() {
             return;
         }
 
-        let default_settings = cfg.data.profiles.iter()
-            .find(|p| p.is_default)
-            .cloned()
-            .unwrap_or_default();
+        let new_profile = {
+            let mut cfg = config_clone.borrow_mut();
 
-        let mut new_profile = default_settings;
-        new_profile.name = name.clone();
-        new_profile.is_default = false;
+            if cfg.data.profiles.iter().any(|p| p.name == name) {
+                drop(cfg);
+                show_toast(&window_clone, &format!("Profile '{}' already exists", name));
+                return;
+            }
 
-        cfg.data.profiles.push(new_profile);
+            let default_settings = cfg.data.profiles.iter()
+                .find(|p| p.is_default)
+                .cloned()
+                .unwrap_or_default();
 
-        // optional: immediately switch to newly created profile
-        cfg.data.current_profile = name.clone();
-    }
+            let mut new_profile = default_settings;
+            new_profile.name = name.clone();
+            new_profile.is_default = false;
 
-    // Save after releasing mutable borrow
-    let _ = config_clone.borrow().save();
+            cfg.data.profiles.push(new_profile.clone());
+            cfg.data.current_profile = name.clone();
+            
+            new_profile
+        };
 
-    entry_clone.set_text("");
+        let _ = config_clone.borrow().save();
+        entry_clone.set_text("");
 
-    // toast...
-});
+        // Rebuild just the custom profiles group
+        if let Some(group) = custom_group_weak.upgrade() {
+            // Remove all existing rows
+            while let Some(child) = group.first_child() {
+                group.remove(&child);
+            }
+            
+            // Re-add all custom profiles
+            let custom_profiles: Vec<_> = config_clone.borrow().data.profiles.iter()
+                .filter(|p| !p.is_default)
+                .cloned()
+                .collect();
+            
+            let mut current_radio = radio_group_rc.borrow().clone();
+            
+            for profile in custom_profiles {
+                let (profile_row, radio) = create_profile_row(
+                    &profile,
+                    true,
+                    config_clone.clone(),
+                    dbus_clone.clone(),
+                    current_radio.clone(),
+                    window_clone.clone(),
+                );
+                current_radio = Some(radio);
+                group.add(&profile_row);
+            }
+            
+            *radio_group_rc.borrow_mut() = current_radio;
+        }
+
+        show_toast(&window_clone, &format!("Profile '{}' created", name));
+    });
     
     main_box.append(&create_group);
     
     main_box
+}
+
+fn show_toast(window: &gtk::Window, message: &str) {
+    let toast = adw::Toast::builder()
+        .title(message)
+        .timeout(3)
+        .build();
+    
+    if let Some(app_window) = window.downcast_ref::<adw::ApplicationWindow>() {
+        if let Some(toast_overlay) = get_toast_overlay(&app_window) {
+            toast_overlay.add_toast(toast);
+        }
+    }
 }
 
 // Helper function to find ToastOverlay in window widget tree
@@ -329,13 +375,13 @@ fn create_profile_row(
         reset_button.connect_clicked(move |_| {
             let mut cfg = config_clone.borrow_mut();
             if let Some(default_prof) = cfg.data.profiles.iter_mut().find(|p| p.is_default) {
-                let reset_profile = default_prof.clone();  // Clone before modifying
-               *default_prof = Profile::default();
+                let reset_profile = Profile::default();
+                *default_prof = reset_profile.clone();
                 default_prof.is_default = true;
         
-                drop(cfg);  // Explicitly drop mutable borrow
+                drop(cfg);
         
-                let _ = config_clone.borrow().save();  // Now safe immutable borrow
+                let _ = config_clone.borrow().save();
         
                 if let Some(client) = dbus_clone.borrow().as_ref() {
                    let _ = client.apply_profile(&reset_profile);
@@ -347,66 +393,6 @@ fn create_profile_row(
     }
     
     (expander, radio)
-}
-
-fn show_new_profile_dialog(config: Rc<RefCell<Config>>, window: gtk::Window) {
-    let dialog = adw::MessageDialog::builder()
-        .heading("Create New Profile")
-        .body("Enter a name for the new profile")
-        .transient_for(&window)
-        .build();
-    
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("create", "Create");
-    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-    dialog.set_default_response(Some("create"));
-    dialog.set_close_response("cancel");
-    
-    let entry = Entry::builder()
-        .placeholder_text("Profile name")
-        .build();
-    
-    let content_box = Box::new(Orientation::Vertical, 12);
-    content_box.set_margin_top(12);
-    content_box.set_margin_bottom(12);
-    content_box.set_margin_start(12);
-    content_box.set_margin_end(12);
-    content_box.append(&entry);
-    
-    dialog.set_extra_child(Some(&content_box));
-    
-    let config_clone = config.clone();
-    let entry_clone = entry.clone();
-    let window_clone = window.clone();
-    dialog.connect_response(None, move |dialog, response| {
-        if response == "create" {
-            let name = entry_clone.text().to_string();
-            if !name.is_empty() {
-                let mut cfg = config_clone.borrow_mut();
-                
-                if cfg.data.profiles.iter().any(|p| p.name == name) {
-                    drop(cfg);
-                    show_error_dialog("Profile Already Exists", &format!("A profile named '{}' already exists.", name), &window_clone);
-                    return;
-                }
-                
-                let default_settings = cfg.data.profiles.iter()
-                    .find(|p| p.is_default)
-                    .cloned()
-                    .unwrap_or_default();
-                
-                let mut new_profile = default_settings;
-                new_profile.name = name.clone();
-                new_profile.is_default = false;
-                
-                cfg.data.profiles.push(new_profile);
-                let _ = cfg.save();
-            }
-        }
-        dialog.close();
-    });
-    
-    dialog.present();
 }
 
 fn show_delete_confirmation(profile_name: &str, config: Rc<RefCell<Config>>, window: gtk::Window) {
@@ -432,34 +418,10 @@ fn show_delete_confirmation(profile_name: &str, config: Rc<RefCell<Config>>, win
             let _ = cfg.save();
             drop(cfg);
             
-            // Show success toast
-            let toast = adw::Toast::builder()
-                .title(&format!("Profile '{}' deleted", profile_name_clone))
-                .timeout(3)
-                .build();
-            
-            if let Some(window) = window_clone.downcast_ref::<adw::ApplicationWindow>() {
-                if let Some(toast_overlay) = get_toast_overlay(&window) {
-                    toast_overlay.add_toast(toast);
-                }
-            }
+            show_toast(&window_clone, &format!("Profile '{}' deleted", profile_name_clone));
         }
         dialog.close();
     });
-    
-    dialog.present();
-}
-
-fn show_error_dialog(heading: &str, body: &str, window: &gtk::Window) {
-    let dialog = adw::MessageDialog::builder()
-        .heading(heading)
-        .body(body)
-        .transient_for(window)
-        .build();
-    
-    dialog.add_response("ok", "OK");
-    dialog.set_default_response(Some("ok"));
-    dialog.set_close_response("ok");
     
     dialog.present();
 }
