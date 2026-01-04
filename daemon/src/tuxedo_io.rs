@@ -353,7 +353,6 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
             HardwareInterface::None => Err(anyhow!("No hardware interface")),
         }
     }
-}
     
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
