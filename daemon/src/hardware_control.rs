@@ -282,12 +282,13 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     let io = TuxedoIo::new()?;
     let profiles = io.get_available_profiles()?;
     
+    // Find profile by name and use its index directly (0..3)
     if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
         io.set_performance_profile(profile_id as u32)?;
         log::info!("Set TDP profile to: {} (id: {})", profile_name, profile_id);
         Ok(())
     } else {
-        Err(anyhow!("Profile '{}' not found", profile_name))
+        Err(anyhow!("Profile '{}' not found. Available: {:?}", profile_name, profiles))
     }
 }
 
