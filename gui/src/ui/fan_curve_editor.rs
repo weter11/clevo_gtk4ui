@@ -158,22 +158,21 @@ fn create_point_row(
         .title(&format!("Point {}", index + 1))
         .build();
 
-    // Store index on the row
     row.set_data("index", index);
 
     // ---- Temperature ----
     let temp_adj = gtk::Adjustment::new(temp as f64, 0.0, 100.0, 1.0, 5.0, 0.0);
     let temp_spin = gtk::SpinButton::new(Some(&temp_adj), 1.0, 0);
-    temp_spin.set_width_chars(4);
 
     let curve_clone = curve.clone();
     let drawing_clone = drawing_area.clone();
     let row_clone = row.clone();
     temp_spin.connect_value_changed(move |spin| {
         if let Some(idx) = row_clone.data::<usize>("index") {
+            let idx = *idx.as_ref();
             let mut crv = curve_clone.borrow_mut();
-            if *idx < crv.points.len() {
-                crv.points[*idx].0 = spin.value() as u8;
+            if idx < crv.points.len() {
+                crv.points[idx].0 = spin.value() as u8;
                 drawing_clone.queue_draw();
             }
         }
@@ -185,16 +184,16 @@ fn create_point_row(
     // ---- Speed ----
     let speed_adj = gtk::Adjustment::new(speed as f64, 0.0, 100.0, 1.0, 5.0, 0.0);
     let speed_spin = gtk::SpinButton::new(Some(&speed_adj), 1.0, 0);
-    speed_spin.set_width_chars(4);
 
     let curve_clone = curve.clone();
     let drawing_clone = drawing_area.clone();
     let row_clone = row.clone();
     speed_spin.connect_value_changed(move |spin| {
         if let Some(idx) = row_clone.data::<usize>("index") {
+            let idx = *idx.as_ref();
             let mut crv = curve_clone.borrow_mut();
-            if *idx < crv.points.len() {
-                crv.points[*idx].1 = spin.value() as u8;
+            if idx < crv.points.len() {
+                crv.points[idx].1 = spin.value() as u8;
                 drawing_clone.queue_draw();
             }
         }
@@ -203,7 +202,7 @@ fn create_point_row(
     row.add_suffix(&speed_spin);
     row.add_suffix(&Label::new(Some("%")));
 
-    // ---- Delete button ----
+    // ---- Delete ----
     let delete_btn = Button::from_icon_name("trash-symbolic");
     delete_btn.add_css_class("destructive-action");
 
@@ -211,12 +210,12 @@ fn create_point_row(
     let drawing_clone = drawing_area.clone();
     let list_clone = list.clone();
     let row_clone = row.clone();
-
     delete_btn.connect_clicked(move |_| {
         if let Some(idx) = row_clone.data::<usize>("index") {
+            let idx = *idx.as_ref();
             let mut crv = curve_clone.borrow_mut();
-            if crv.points.len() > 1 && *idx < crv.points.len() {
-                crv.points.remove(*idx);
+            if crv.points.len() > 1 && idx < crv.points.len() {
+                crv.points.remove(idx);
             }
         }
 
@@ -229,12 +228,17 @@ fn create_point_row(
     row
 }
 
-    fn reindex_rows(list: &gtk::ListBox) {
-    for (i, row) in list.children().iter().enumerate() {
-        if let Ok(row) = row.clone().downcast::<adw::ActionRow>() {
+fn reindex_rows(list: &gtk::ListBox) {
+    let mut i = 0;
+    let mut child = list.first_child();
+
+    while let Some(widget) = child {
+        if let Ok(row) = widget.downcast::<adw::ActionRow>() {
             row.set_title(&format!("Point {}", i + 1));
             row.set_data("index", i);
+            i += 1;
         }
+        child = widget.next_sibling();
     }
 }
 
