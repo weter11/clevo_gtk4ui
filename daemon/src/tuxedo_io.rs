@@ -298,7 +298,7 @@ impl TuxedoIo {
 
         match self.interface {
             HardwareInterface::Clevo => {
-                let auto_val: i32 = 1;
+                let auto_val: i32 = 0xF;
                 unsafe {
                     ioctl_cl_fanauto(fd, &auto_val)?;
                 }
@@ -318,25 +318,40 @@ impl TuxedoIo {
         let fd = self.device.as_raw_fd();
 
         match self.interface {
-            HardwareInterface::Clevo => {
-                // Clevo returns temperature in upper byte of faninfo
-                let mut result: i32 = 0;
-                unsafe {
-                    match fan_id {
-                        0 => {
-                            let _ = ioctl_cl_faninfo1(fd, &mut result)?;
-                        }
-                        1 => {
-                            let _ = ioctl_cl_faninfo2(fd, &mut result)?;
-                        }
-                        2 => {
-                            let _ = ioctl_cl_faninfo3(fd, &mut result)?;
-                        }
-                        _ => return Err(anyhow!("Invalid fan ID")),
-                    }
+    HardwareInterface::Clevo => {
+        // Clevo returns temperature in upper byte of faninfo
+        let mut result: i32 = 0;
+        unsafe {
+            match fan_id {
+                0 => {
+                    let _ = ioctl_cl_faninfo1(fd, &mut result)?;
+                    log::debug!(
+                        "Clevo faninfo1 raw result=0x{:08x} ({})",
+                        result as u32,
+                        result
+                    );
                 }
-                Ok(((result >> 8) & 0xFF) as u32)
+                1 => {
+                    let _ = ioctl_cl_faninfo2(fd, &mut result)?;
+                    log::debug!(
+                        "Clevo faninfo2 raw result=0x{:08x} ({})",
+                        result as u32,
+                        result
+                    );
+                }
+                2 => {
+                    let _ = ioctl_cl_faninfo3(fd, &mut result)?;
+                    log::debug!(
+                        "Clevo faninfo3 raw result=0x{:08x} ({})",
+                        result as u32,
+                        result
+                    );
+                }
+                _ => return Err(anyhow!("Invalid fan ID")),
             }
+        }
+        Ok(((result >> 8) & 0xFF) as u32)
+    }
             HardwareInterface::Uniwill => {
                 let mut result: i32 = 0;
                 unsafe {
