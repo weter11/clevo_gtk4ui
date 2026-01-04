@@ -147,18 +147,13 @@ impl FanCurveEditor {
     }
 
 fn create_point_row(
-    index: usize,
     temp: u8,
     speed: u8,
     curve: Rc<RefCell<FanCurve>>,
     drawing_area: DrawingArea,
     list: gtk::ListBox,
 ) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(&format!("Point {}", index + 1))
-        .build();
-
-    row.set_data("index", index);
+    let row = adw::ActionRow::new();
 
     // ---- Temperature ----
     let temp_adj = gtk::Adjustment::new(temp as f64, 0.0, 100.0, 1.0, 5.0, 0.0);
@@ -166,15 +161,14 @@ fn create_point_row(
 
     let curve_clone = curve.clone();
     let drawing_clone = drawing_area.clone();
+    let list_clone = list.clone();
     let row_clone = row.clone();
     temp_spin.connect_value_changed(move |spin| {
-        if let Some(idx) = row_clone.data::<usize>("index") {
-            let idx = *idx.as_ref();
-            let mut crv = curve_clone.borrow_mut();
-            if idx < crv.points.len() {
-                crv.points[idx].0 = spin.value() as u8;
-                drawing_clone.queue_draw();
-            }
+        let idx = list_clone.position(&row_clone) as usize;
+        let mut crv = curve_clone.borrow_mut();
+        if idx < crv.points.len() {
+            crv.points[idx].0 = spin.value() as u8;
+            drawing_clone.queue_draw();
         }
     });
 
@@ -187,15 +181,14 @@ fn create_point_row(
 
     let curve_clone = curve.clone();
     let drawing_clone = drawing_area.clone();
+    let list_clone = list.clone();
     let row_clone = row.clone();
     speed_spin.connect_value_changed(move |spin| {
-        if let Some(idx) = row_clone.data::<usize>("index") {
-            let idx = *idx.as_ref();
-            let mut crv = curve_clone.borrow_mut();
-            if idx < crv.points.len() {
-                crv.points[idx].1 = spin.value() as u8;
-                drawing_clone.queue_draw();
-            }
+        let idx = list_clone.position(&row_clone) as usize;
+        let mut crv = curve_clone.borrow_mut();
+        if idx < crv.points.len() {
+            crv.points[idx].1 = spin.value() as u8;
+            drawing_clone.queue_draw();
         }
     });
 
@@ -211,12 +204,11 @@ fn create_point_row(
     let list_clone = list.clone();
     let row_clone = row.clone();
     delete_btn.connect_clicked(move |_| {
-        if let Some(idx) = row_clone.data::<usize>("index") {
-            let idx = *idx.as_ref();
-            let mut crv = curve_clone.borrow_mut();
-            if crv.points.len() > 1 && idx < crv.points.len() {
-                crv.points.remove(idx);
-            }
+        let idx = list_clone.position(&row_clone) as usize;
+
+        let mut crv = curve_clone.borrow_mut();
+        if crv.points.len() > 1 && idx < crv.points.len() {
+            crv.points.remove(idx);
         }
 
         list_clone.remove(&row_clone);
@@ -233,12 +225,14 @@ fn reindex_rows(list: &gtk::ListBox) {
     let mut child = list.first_child();
 
     while let Some(widget) = child {
-        if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+        let next = widget.next_sibling();
+
+        if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
             row.set_title(&format!("Point {}", i + 1));
-            row.set_data("index", i);
             i += 1;
         }
-        child = widget.next_sibling();
+
+        child = next;
     }
 }
 
