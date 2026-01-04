@@ -297,6 +297,7 @@ pub fn set_fan_speed(fan_id: u32, speed_percent: u32) -> Result<()> {
     }
     
     let speed = speed_percent.min(100);
+    log::info!("DBus request: set fan {} to {}%", fan_id, speed);
     let io = TuxedoIo::new()?;
     io.set_fan_speed(fan_id, speed)?;
     
