@@ -19,25 +19,11 @@ pub fn create_page(
         .vexpand(true)
         .hexpand(true)
         .build();
-    
+
+    // Build once. Do NOT rebuild every second, it breaks Entry editing and button actions.
     let content = build_profiles_content(config.clone(), dbus_client.clone(), window.clone());
     scrolled.set_child(Some(&content));
-    
-    let scrolled_weak = scrolled.downgrade();
-    let config_clone = config.clone();
-    let dbus_clone = dbus_client.clone();
-    let window_clone = window.clone();
-    
-    gtk::glib::timeout_add_seconds_local(1, move || {
-        if let Some(scrolled) = scrolled_weak.upgrade() {
-            let new_content = build_profiles_content(config_clone.clone(), dbus_clone.clone(), window_clone.clone());
-            scrolled.set_child(Some(&new_content));
-            gtk::glib::ControlFlow::Continue
-        } else {
-            gtk::glib::ControlFlow::Break
-        }
-    });
-    
+
     scrolled
 }
 
@@ -132,57 +118,42 @@ fn build_profiles_content(
     let config_clone = config.clone();
     let entry_clone = entry.clone();
     let window_clone = window.clone();
-    create_button.connect_clicked(move |_| {
-        let name = entry_clone.text().to_string();
-        if name.is_empty() {
-            return;
-        }
-        
+create_button.connect_clicked(move |_| {
+    let name = entry_clone.text().to_string();
+    if name.is_empty() {
+        return;
+    }
+
+    {
         let mut cfg = config_clone.borrow_mut();
-        
+
         if cfg.data.profiles.iter().any(|p| p.name == name) {
-            drop(cfg);
-            
-            let toast = adw::Toast::builder()
-                .title(&format!("Profile '{}' already exists", name))
-                .timeout(3)
-                .build();
-            
-            if let Some(window) = window_clone.downcast_ref::<adw::ApplicationWindow>() {
-                if let Some(toast_overlay) = get_toast_overlay(&window) {
-                    toast_overlay.add_toast(toast);
-                }
-            }
+            // show toast...
             return;
         }
-        
+
         let default_settings = cfg.data.profiles.iter()
             .find(|p| p.is_default)
             .cloned()
             .unwrap_or_default();
-        
+
         let mut new_profile = default_settings;
         new_profile.name = name.clone();
         new_profile.is_default = false;
-        
+
         cfg.data.profiles.push(new_profile);
-        let _ = cfg.save();
-        drop(cfg);
-        
-        entry_clone.set_text("");
-        
-        // Show success toast
-        let toast = adw::Toast::builder()
-            .title(&format!("Profile '{}' created successfully", name))
-            .timeout(3)
-            .build();
-        
-        if let Some(window) = window_clone.downcast_ref::<adw::ApplicationWindow>() {
-            if let Some(toast_overlay) = get_toast_overlay(&window) {
-                toast_overlay.add_toast(toast);
-            }
-        }
-    });
+
+        // optional: immediately switch to newly created profile
+        cfg.data.current_profile = name.clone();
+    }
+
+    // Save after releasing mutable borrow
+    let _ = config_clone.borrow().save();
+
+    entry_clone.set_text("");
+
+    // toast...
+});
     
     main_box.append(&create_group);
     
