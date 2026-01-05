@@ -561,13 +561,4 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         
         Ok(())
     }
-
-    impl Drop for TuxedoIo {
-    fn drop(&mut self) {
-        // Attempt to revert to auto mode on exit
-        // We ignore errors here because we can't really handle them during a panic/drop
-        let _ = self.set_fan_auto();
-        println!("TuxedoIO: Safety fallback triggered - Fans set to Auto.");
-    }
-}
 }
