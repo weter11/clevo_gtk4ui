@@ -20,7 +20,7 @@ pub fn create_page(
         .hexpand(true)
         .build();
 
-    let content = build_profiles_content(config.clone(), dbus_client.clone(), window.clone());
+    let content = build_profiles_content(config.clone(), dbus_client.clone(), window.clone(), scrolled.clone());
     scrolled.set_child(Some(&content));
 
     scrolled
@@ -30,6 +30,7 @@ fn build_profiles_content(
     config: Rc<RefCell<Config>>,
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
     window: gtk::Window,
+    scrolled: ScrolledWindow,
 ) -> Box {
     let main_box = Box::new(Orientation::Vertical, 12);
     main_box.set_margin_top(24);
@@ -118,8 +119,7 @@ fn build_profiles_content(
     let dbus_clone = dbus_client.clone();
     let entry_clone = entry.clone();
     let window_clone = window.clone();
-    let custom_group_weak = custom_group.downgrade();
-    let radio_group_rc = Rc::new(RefCell::new(radio_group));
+    let scrolled_clone = scrolled.clone();
     
     create_button.connect_clicked(move |_| {
         let name = entry_clone.text().to_string();
@@ -127,7 +127,7 @@ fn build_profiles_content(
             return;
         }
 
-        let new_profile = {
+        {
             let mut cfg = config_clone.borrow_mut();
 
             if cfg.data.profiles.iter().any(|p| p.name == name) {
@@ -147,43 +147,19 @@ fn build_profiles_content(
 
             cfg.data.profiles.push(new_profile.clone());
             cfg.data.current_profile = name.clone();
-            
-            new_profile
-        };
+        }
 
         let _ = config_clone.borrow().save();
         entry_clone.set_text("");
 
-        // Rebuild just the custom profiles group
-        if let Some(group) = custom_group_weak.upgrade() {
-            // Remove all existing rows
-            while let Some(child) = group.first_child() {
-                group.remove(&child);
-            }
-            
-            // Re-add all custom profiles
-            let custom_profiles: Vec<_> = config_clone.borrow().data.profiles.iter()
-                .filter(|p| !p.is_default)
-                .cloned()
-                .collect();
-            
-            let mut current_radio = radio_group_rc.borrow().clone();
-            
-            for profile in custom_profiles {
-                let (profile_row, radio) = create_profile_row(
-                    &profile,
-                    true,
-                    config_clone.clone(),
-                    dbus_clone.clone(),
-                    current_radio.clone(),
-                    window_clone.clone(),
-                );
-                current_radio = Some(radio);
-                group.add(&profile_row);
-            }
-            
-            *radio_group_rc.borrow_mut() = current_radio;
-        }
+        // Rebuild the entire content
+        let new_content = build_profiles_content(
+            config_clone.clone(),
+            dbus_clone.clone(),
+            window_clone.clone(),
+            scrolled_clone.clone(),
+        );
+        scrolled_clone.set_child(Some(&new_content));
 
         show_toast(&window_clone, &format!("Profile '{}' created", name));
     });
@@ -206,7 +182,6 @@ fn show_toast(window: &gtk::Window, message: &str) {
     }
 }
 
-// Helper function to find ToastOverlay in window widget tree
 fn get_toast_overlay(window: &adw::ApplicationWindow) -> Option<adw::ToastOverlay> {
     if let Some(content) = window.content() {
         return find_toast_overlay_recursive(&content);
@@ -219,7 +194,6 @@ fn find_toast_overlay_recursive(widget: &gtk::Widget) -> Option<adw::ToastOverla
         return Some(overlay.clone());
     }
     
-    // Check children
     let mut child = widget.first_child();
     while let Some(c) = child {
         if let Some(found) = find_toast_overlay_recursive(&c) {
@@ -359,10 +333,16 @@ fn create_profile_row(
         delete_button.add_css_class("destructive-action");
         
         let config_clone = config.clone();
+        let dbus_clone = dbus_client.clone();
         let profile_name = profile.name.clone();
         let window_clone = window.clone();
         delete_button.connect_clicked(move |_| {
-            show_delete_confirmation(&profile_name, config_clone.clone(), window_clone.clone());
+            show_delete_confirmation(
+                &profile_name,
+                config_clone.clone(),
+                dbus_clone.clone(),
+                window_clone.clone(),
+            );
         });
         
         expander.add_suffix(&delete_button);
@@ -395,7 +375,12 @@ fn create_profile_row(
     (expander, radio)
 }
 
-fn show_delete_confirmation(profile_name: &str, config: Rc<RefCell<Config>>, window: gtk::Window) {
+fn show_delete_confirmation(
+    profile_name: &str,
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    window: gtk::Window,
+) {
     let dialog = adw::MessageDialog::builder()
         .heading("Delete Profile?")
         .body(&format!("Are you sure you want to delete the profile '{}'?", profile_name))
@@ -409,6 +394,7 @@ fn show_delete_confirmation(profile_name: &str, config: Rc<RefCell<Config>>, win
     dialog.set_close_response("cancel");
     
     let config_clone = config.clone();
+    let dbus_clone = dbus_client.clone();
     let profile_name_clone = profile_name.to_string();
     let window_clone = window.clone();
     dialog.connect_response(None, move |dialog, response| {
@@ -419,6 +405,30 @@ fn show_delete_confirmation(profile_name: &str, config: Rc<RefCell<Config>>, win
             drop(cfg);
             
             show_toast(&window_clone, &format!("Profile '{}' deleted", profile_name_clone));
+            
+            // Rebuild the profiles page
+            if let Some(app_window) = window_clone.downcast_ref::<adw::ApplicationWindow>() {
+                if let Some(content) = app_window.content() {
+                    if let Some(vbox) = content.downcast_ref::<Box>() {
+                        let mut child = vbox.first_child();
+                        child = child.and_then(|c| c.next_sibling());
+                        
+                        if let Some(view_stack) = child.and_then(|c| c.downcast::<adw::ViewStack>().ok()) {
+                            if let Some(profiles_page) = view_stack.child_by_name("profiles") {
+                                if let Some(scrolled) = profiles_page.downcast_ref::<ScrolledWindow>() {
+                                    let new_content = build_profiles_content(
+                                        config_clone.clone(),
+                                        dbus_clone.clone(),
+                                        window_clone.clone(),
+                                        scrolled.clone(),
+                                    );
+                                    scrolled.set_child(Some(&new_content));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         dialog.close();
     });
