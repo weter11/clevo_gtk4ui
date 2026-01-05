@@ -65,7 +65,6 @@ pub struct TuxedoIo {
     device: std::fs::File,
     interface: HardwareInterface,
     fan_count: u32,
-    is_manual: false,
 }
 
 impl TuxedoIo {
@@ -80,6 +79,7 @@ impl TuxedoIo {
             .map_err(|e| anyhow!("ioctl read failed (req=0x{:x}): {}", request, e))?;
         Ok(data)
     }
+    
     pub fn new() -> Result<Self> {
         let device = OpenOptions::new()
             .read(true)
@@ -118,7 +118,7 @@ impl TuxedoIo {
         (((p * 255) + 50) / 100) as u8
     }
 
-fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
+    fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
         let fd = device.as_raw_fd();
 
         let cl_res = Self::ioctl_read_i32(
@@ -205,7 +205,7 @@ fn detect_interface(device: &std::fs::File) -> Result<HardwareInterface> {
     }
 
     // Fan control methods
-pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
+    pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
 
         match self.interface {
@@ -242,127 +242,115 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         }
     }
 
-    pub fn set_fan_speed(&mut self, fan_id: u32, speed_percent: u32) -> Result<()> {
-    // Automatically engage manual mode if we haven't yet
-    if !self.is_manual {
-        self.set_fan_manual()?;
-        self.is_manual = true;
-    }
-    
-    let fd = self.device.as_raw_fd();
+    pub fn set_fan_speed(&self, fan_id: u32, speed_percent: u32) -> Result<()> {
+        let fd = self.device.as_raw_fd();
 
-    match self.interface {
-        HardwareInterface::Clevo => {
-            let mut current_raw = [0u8; 3];
-
-            // Read current fan speeds
-            for i in 0..self.fan_count.min(3) {
-                let seq = match i {
-                    0 => 0x10,
-                    1 => 0x11,
-                    2 => 0x12,
-                    _ => unreachable!(),
-                };
-                if let Ok(raw) = Self::ioctl_read_i32(
-                    fd,
-                    Self::request_code_read_i32(MAGIC_READ_CL, seq),
-                ) {
-                    current_raw[i as usize] = (raw & 0xFF) as u8;
-                }
-            }
-
-            // Update the fan speed
-            current_raw[fan_id as usize] =
-                Self::clevo_percent_to_raw(speed_percent);
-
-            let packed = (current_raw[0] as i32)
-                | ((current_raw[1] as i32) << 8)
-                | ((current_raw[2] as i32) << 16);
-
-            log::debug!(
-                "Writing Clevo packed raw: {:02x} {:02x} {:02x} (packed=0x{:06x})",
-                current_raw[0],
-                current_raw[1],
-                current_raw[2],
-                packed
-            );
-
-            unsafe {
-                ioctl_cl_fanspeed(fd, &packed)?;
-            }
-
-            Ok(())
-        }
-
-        HardwareInterface::Uniwill => {
-            let val: i32 = speed_percent.min(200) as i32;
-
-            unsafe {
-                match fan_id {
-                    0 => {
-                        ioctl_uw_fanspeed_w(fd, &val)?;
+        match self.interface {
+            HardwareInterface::Clevo => {
+                // Clamp the speed to 0-100
+                let speed_percent = speed_percent.min(100);
+                
+                // Read current fan speeds for all fans
+                let mut current_raw = [0u8; 3];
+                for i in 0..self.fan_count.min(3) {
+                    let seq = match i {
+                        0 => 0x10,
+                        1 => 0x11,
+                        2 => 0x12,
+                        _ => unreachable!(),
+                    };
+                    if let Ok(raw) = Self::ioctl_read_i32(
+                        fd,
+                        Self::request_code_read_i32(MAGIC_READ_CL, seq),
+                    ) {
+                        current_raw[i as usize] = (raw & 0xFF) as u8;
                     }
-                    1 => {
-                        ioctl_uw_fanspeed2_w(fd, &val)?;
-                    }
-                    _ => return Err(anyhow!("Invalid fan ID")),
                 }
+
+                // Update the requested fan speed
+                if fan_id >= 3 {
+                    return Err(anyhow!("Invalid fan ID: {}", fan_id));
+                }
+                current_raw[fan_id as usize] = Self::clevo_percent_to_raw(speed_percent);
+
+                // Pack all fan speeds into a single i32
+                let packed = (current_raw[0] as i32)
+                    | ((current_raw[1] as i32) << 8)
+                    | ((current_raw[2] as i32) << 16);
+
+                log::debug!(
+                    "Setting Clevo fan {} to {}% (raw: {:#04x}), packed value: {:#08x}",
+                    fan_id,
+                    speed_percent,
+                    current_raw[fan_id as usize],
+                    packed
+                );
+
+                // Write the packed value - this implicitly disables auto mode
+                unsafe {
+                    ioctl_cl_fanspeed(fd, &packed)?;
+                }
+
+                Ok(())
             }
 
-            Ok(())
-        }
+            HardwareInterface::Uniwill => {
+                let val: i32 = speed_percent.min(200) as i32;
 
-        HardwareInterface::None => Err(anyhow!("No hardware interface")),
+                log::debug!(
+                    "Setting Uniwill fan {} to {}% (raw: {})",
+                    fan_id,
+                    speed_percent,
+                    val
+                );
+
+                unsafe {
+                    match fan_id {
+                        0 => {
+                            ioctl_uw_fanspeed_w(fd, &val)?;
+                        }
+                        1 => {
+                            ioctl_uw_fanspeed2_w(fd, &val)?;
+                        }
+                        _ => return Err(anyhow!("Invalid fan ID: {}", fan_id)),
+                    }
+                }
+
+                Ok(())
+            }
+
+            HardwareInterface::None => Err(anyhow!("No hardware interface")),
+        }
     }
-}
 
-    pub fn set_fan_auto(&mut self) -> Result<()> {
-    let fd = self.device.as_raw_fd();
+    pub fn set_fan_auto(&self) -> Result<()> {
+        let fd = self.device.as_raw_fd();
 
-    match self.interface {
-        HardwareInterface::Clevo => {
-            let auto_val: i32 = 0xF;
-            unsafe {
-                ioctl_cl_fanauto(fd, &auto_val)?;
+        match self.interface {
+            HardwareInterface::Clevo => {
+                // Set auto mode - 0xF means all fans auto
+                let auto_val: i32 = 0xF;
+                
+                log::debug!("Setting Clevo fans to auto mode");
+                
+                unsafe {
+                    ioctl_cl_fanauto(fd, &auto_val)?;
+                }
+                Ok(())
             }
-            self.is_manual = false; // Reset state when switching to auto
-            Ok(())
-        }
 
-        HardwareInterface::Uniwill => {
-            unsafe {
-                ioctl_uw_fanauto(fd, 1)?;
+            HardwareInterface::Uniwill => {
+                log::debug!("Setting Uniwill fans to auto mode");
+                
+                unsafe {
+                    ioctl_uw_fanauto(fd, 1)?;
+                }
+                Ok(())
             }
-            self.is_manual = false; // Reset state when switching to auto
-            Ok(())
-        }
 
-        HardwareInterface::None => Err(anyhow!("No hardware interface")),
+            HardwareInterface::None => Err(anyhow!("No hardware interface")),
+        }
     }
-}
-
-    pub fn set_fan_manual(&self) -> Result<()> {
-    let fd = self.device.as_raw_fd();
-
-    match self.interface {
-        HardwareInterface::Clevo => {
-            // Writing 0 to the auto register disables EC control (Manual Mode)
-            let manual_val: i32 = 0;
-            unsafe {
-                ioctl_cl_fanauto(fd, &manual_val)?;
-            }
-            Ok(())
-        }
-        HardwareInterface::Uniwill => {
-            // Assuming 0 disables auto mode for Uniwill as well
-            unsafe {
-                ioctl_uw_fanauto(fd, 0)?;
-            }
-            Ok(())
-        }
-        HardwareInterface::None => Err(anyhow!("No hardware interface")),
-    }
-}
 
     pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
@@ -408,15 +396,15 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
     // Performance profile methods
     pub fn get_available_profiles(&self) -> Result<Vec<String>> {
         match self.interface {
-        HardwareInterface::Clevo => {
-            // Clevo has 4 fixed profiles (0x00 to 0x03)
-            Ok(vec![
-                "quiet".to_string(),           // 0x00
-                "power_saving".to_string(),    // 0x01
-                "performance".to_string(),     // 0x02
-                "entertainment".to_string(),   // 0x03
-            ])
-        }
+            HardwareInterface::Clevo => {
+                // Clevo has 4 fixed profiles (0x00 to 0x03)
+                Ok(vec![
+                    "quiet".to_string(),           // 0x00
+                    "power_saving".to_string(),    // 0x01
+                    "performance".to_string(),     // 0x02
+                    "entertainment".to_string(),   // 0x03
+                ])
+            }
             HardwareInterface::Uniwill => {
                 let fd = self.device.as_raw_fd();
                 let mut result: i32 = 0;
@@ -426,11 +414,11 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
                 
                 let mut profiles = vec![];
                 if result >= 2 {
-                    profiles.push("Power Saving".to_string());
-                    profiles.push("Enthusiast".to_string());
+                    profiles.push("power_save".to_string());
+                    profiles.push("enthusiast".to_string());
                 }
                 if result >= 3 {
-                    profiles.push("Overboost".to_string());
+                    profiles.push("overboost".to_string());
                 }
                 Ok(profiles)
             }
@@ -442,22 +430,58 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
         
         match self.interface {
-        HardwareInterface::Clevo => {
-            if profile_id > 3 {
-                return Err(anyhow!("Invalid profile ID: {}", profile_id));
+            HardwareInterface::Clevo => {
+                if profile_id > 3 {
+                    return Err(anyhow!("Invalid Clevo profile ID: {}", profile_id));
+                }
+                let profile_val = profile_id as i32;
+                
+                log::debug!("Setting Clevo performance profile to {}", profile_id);
+                
+                unsafe {
+                    ioctl_cl_perf_profile(fd, &profile_val)?;
+                }
+                Ok(())
             }
-            let profile_val = profile_id as i32;
-            unsafe {
-                ioctl_cl_perf_profile(fd, &profile_val)?;
-            }
-            Ok(())
-        }
             HardwareInterface::Uniwill => {
-                let profile_val = (profile_id + 1) as i32; // Uniwill uses 1-3, so keep the +1
+                // Uniwill uses 1-3 for profiles
+                if profile_id < 1 || profile_id > 3 {
+                    return Err(anyhow!("Invalid Uniwill profile ID: {}", profile_id));
+                }
+                let profile_val = profile_id as i32;
+                
+                log::debug!("Setting Uniwill performance profile to {}", profile_id);
+                
                 unsafe {
                     ioctl_uw_perf_prof(fd, &profile_val)?;
                 }
                 Ok(())
+            }
+            HardwareInterface::None => Err(anyhow!("No hardware interface available")),
+        }
+    }
+    
+    // Convenience method to set profile by name
+    pub fn set_performance_profile_by_name(&self, profile_name: &str) -> Result<()> {
+        match self.interface {
+            HardwareInterface::Clevo => {
+                let profile_id = match profile_name {
+                    "quiet" => 0,
+                    "power_saving" => 1,
+                    "performance" => 2,
+                    "entertainment" => 3,
+                    _ => return Err(anyhow!("Unknown Clevo profile: {}", profile_name)),
+                };
+                self.set_performance_profile(profile_id)
+            }
+            HardwareInterface::Uniwill => {
+                let profile_id = match profile_name {
+                    "power_save" => 1,
+                    "enthusiast" => 2,
+                    "overboost" => 3,
+                    _ => return Err(anyhow!("Unknown Uniwill profile: {}", profile_name)),
+                };
+                self.set_performance_profile(profile_id)
             }
             HardwareInterface::None => Err(anyhow!("No hardware interface available")),
         }
