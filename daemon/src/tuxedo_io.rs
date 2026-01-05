@@ -242,6 +242,8 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
     }
 
     pub fn set_fan_speed(&self, fan_id: u32, speed_percent: u32) -> Result<()> {
+        // 1. Force Manual Mode first so the EC doesn't overwrite us
+        self.set_fan_manual()?;
         let fd = self.device.as_raw_fd();
 
         match self.interface {
@@ -326,6 +328,29 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
             HardwareInterface::None => Err(anyhow!("No hardware interface")),
         }
     }
+
+    pub fn set_fan_manual(&self) -> Result<()> {
+    let fd = self.device.as_raw_fd();
+
+    match self.interface {
+        HardwareInterface::Clevo => {
+            // Writing 0 to the auto register disables EC control (Manual Mode)
+            let manual_val: i32 = 0;
+            unsafe {
+                ioctl_cl_fanauto(fd, &manual_val)?;
+            }
+            Ok(())
+        }
+        HardwareInterface::Uniwill => {
+            // Assuming 0 disables auto mode for Uniwill as well
+            unsafe {
+                ioctl_uw_fanauto(fd, 0)?;
+            }
+            Ok(())
+        }
+        HardwareInterface::None => Err(anyhow!("No hardware interface")),
+    }
+}
 
     pub fn get_fan_temperature(&self, fan_id: u32) -> Result<u32> {
         let fd = self.device.as_raw_fd();
@@ -536,4 +561,13 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         
         Ok(())
     }
+
+    impl Drop for TuxedoIo {
+    fn drop(&mut self) {
+        // Attempt to revert to auto mode on exit
+        // We ignore errors here because we can't really handle them during a panic/drop
+        let _ = self.set_fan_auto();
+        println!("TuxedoIO: Safety fallback triggered - Fans set to Auto.");
+    }
+}
 }
