@@ -164,9 +164,8 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         temp_spin.connect_value_changed(move |spin| {
-            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
                 let mut crv = curve_clone.borrow_mut();
-                let idx = idx as usize;
                 if idx < crv.points.len() {
                     crv.points[idx].0 = spin.value() as u8;
                     drawing_clone.queue_draw();
@@ -186,9 +185,8 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         speed_spin.connect_value_changed(move |spin| {
-            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
                 let mut crv = curve_clone.borrow_mut();
-                let idx = idx as usize;
                 if idx < crv.points.len() {
                     crv.points[idx].1 = spin.value() as u8;
                     drawing_clone.queue_draw();
@@ -208,9 +206,8 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         delete_btn.connect_clicked(move |_| {
-            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
                 let mut crv = curve_clone.borrow_mut();
-                let idx = idx as usize;
                 
                 if crv.points.len() > 1 && idx < crv.points.len() {
                     crv.points.remove(idx);
@@ -241,6 +238,23 @@ impl FanCurveEditor {
 
             child = next;
         }
+    }
+
+    fn find_row_index(list: &gtk::ListBox, target_row: &adw::ActionRow) -> Option<usize> {
+        let mut index = 0;
+        let mut child = list.first_child();
+
+        while let Some(widget) = child {
+            if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+                if row == *target_row {
+                    return Some(index);
+                }
+                index += 1;
+            }
+            child = widget.next_sibling();
+        }
+
+        None
     }
 
     fn draw_curve(cr: &gtk::cairo::Context, width: i32, height: i32, curve: &FanCurve) {
