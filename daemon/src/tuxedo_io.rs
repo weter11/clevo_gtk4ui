@@ -65,7 +65,7 @@ pub struct TuxedoIo {
     device: std::fs::File,
     interface: HardwareInterface,
     fan_count: u32,
-    is_manual: bool,
+    is_manual: false,
 }
 
 impl TuxedoIo {
