@@ -65,6 +65,7 @@ pub struct TuxedoIo {
     device: std::fs::File,
     interface: HardwareInterface,
     fan_count: u32,
+    is_manual: bool,
 }
 
 impl TuxedoIo {
@@ -241,93 +242,104 @@ pub fn get_fan_speed(&self, fan_id: u32) -> Result<u32> {
         }
     }
 
-    pub fn set_fan_speed(&self, fan_id: u32, speed_percent: u32) -> Result<()> {
-        // 1. Force Manual Mode first so the EC doesn't overwrite us
+    pub fn set_fan_speed(&mut self, fan_id: u32, speed_percent: u32) -> Result<()> {
+    // Automatically engage manual mode if we haven't yet
+    if !self.is_manual {
         self.set_fan_manual()?;
-        let fd = self.device.as_raw_fd();
-
-        match self.interface {
-            HardwareInterface::Clevo => {
-                let mut current_raw = [0u8; 3];
-
-                for i in 0..self.fan_count.min(3) {
-                    let seq = match i {
-                        0 => 0x10,
-                        1 => 0x11,
-                        2 => 0x12,
-                        _ => unreachable!(),
-                    };
-                    if let Ok(raw) = Self::ioctl_read_i32(
-                        fd,
-                        Self::request_code_read_i32(MAGIC_READ_CL, seq),
-                    ) {
-                        current_raw[i as usize] = (raw & 0xFF) as u8;
-                    }
-                }
-
-                current_raw[fan_id as usize] =
-                    Self::clevo_percent_to_raw(speed_percent);
-
-                let packed = (current_raw[0] as i32)
-                    | ((current_raw[1] as i32) << 8)
-                    | ((current_raw[2] as i32) << 16);
-                
-                    log::debug!(
-        "Writing Clevo packed raw: {:02x} {:02x} {:02x} (packed=0x{:06x})",
-        current_raw[0],
-        current_raw[1],
-        current_raw[2],
-        packed
-    );
-
-                unsafe {
-                    ioctl_cl_fanspeed(fd, &packed)?;
-                }
-                Ok(())
-            }
-
-            HardwareInterface::Uniwill => {
-    let val: i32 = speed_percent.min(200) as i32;
-
-    unsafe {
-        match fan_id {
-            0 => {
-                ioctl_uw_fanspeed_w(fd, &val)?;
-            }
-            1 => {
-                ioctl_uw_fanspeed2_w(fd, &val)?;
-            }
-            _ => return Err(anyhow!("Invalid fan ID")),
-        }
+        self.is_manual = true;
     }
+    
+    let fd = self.device.as_raw_fd();
 
-    Ok(())
+    match self.interface {
+        HardwareInterface::Clevo => {
+            let mut current_raw = [0u8; 3];
+
+            // Read current fan speeds
+            for i in 0..self.fan_count.min(3) {
+                let seq = match i {
+                    0 => 0x10,
+                    1 => 0x11,
+                    2 => 0x12,
+                    _ => unreachable!(),
+                };
+                if let Ok(raw) = Self::ioctl_read_i32(
+                    fd,
+                    Self::request_code_read_i32(MAGIC_READ_CL, seq),
+                ) {
+                    current_raw[i as usize] = (raw & 0xFF) as u8;
+                }
+            }
+
+            // Update the fan speed
+            current_raw[fan_id as usize] =
+                Self::clevo_percent_to_raw(speed_percent);
+
+            let packed = (current_raw[0] as i32)
+                | ((current_raw[1] as i32) << 8)
+                | ((current_raw[2] as i32) << 16);
+
+            log::debug!(
+                "Writing Clevo packed raw: {:02x} {:02x} {:02x} (packed=0x{:06x})",
+                current_raw[0],
+                current_raw[1],
+                current_raw[2],
+                packed
+            );
+
+            unsafe {
+                ioctl_cl_fanspeed(fd, &packed)?;
+            }
+
+            Ok(())
+        }
+
+        HardwareInterface::Uniwill => {
+            let val: i32 = speed_percent.min(200) as i32;
+
+            unsafe {
+                match fan_id {
+                    0 => {
+                        ioctl_uw_fanspeed_w(fd, &val)?;
+                    }
+                    1 => {
+                        ioctl_uw_fanspeed2_w(fd, &val)?;
+                    }
+                    _ => return Err(anyhow!("Invalid fan ID")),
+                }
+            }
+
+            Ok(())
+        }
+
+        HardwareInterface::None => Err(anyhow!("No hardware interface")),
+    }
 }
 
-            HardwareInterface::None => Err(anyhow!("No hardware interface")),
-        }
-    }
+    pub fn set_fan_auto(&mut self) -> Result<()> {
+    let fd = self.device.as_raw_fd();
 
-    pub fn set_fan_auto(&self) -> Result<()> {
-        let fd = self.device.as_raw_fd();
-
-        match self.interface {
-            HardwareInterface::Clevo => {
-                let auto_val: i32 = 0xF;
-                unsafe {
-                    ioctl_cl_fanauto(fd, &auto_val)?;
-                }
-                Ok(())
+    match self.interface {
+        HardwareInterface::Clevo => {
+            let auto_val: i32 = 0xF;
+            unsafe {
+                ioctl_cl_fanauto(fd, &auto_val)?;
             }
-            HardwareInterface::Uniwill => {
-                unsafe {
-                    ioctl_uw_fanauto(fd, 1)?;
-                }
-                Ok(())
-            }
-            HardwareInterface::None => Err(anyhow!("No hardware interface")),
+            self.is_manual = false; // Reset state when switching to auto
+            Ok(())
         }
+
+        HardwareInterface::Uniwill => {
+            unsafe {
+                ioctl_uw_fanauto(fd, 1)?;
+            }
+            self.is_manual = false; // Reset state when switching to auto
+            Ok(())
+        }
+
+        HardwareInterface::None => Err(anyhow!("No hardware interface")),
     }
+}
 
     pub fn set_fan_manual(&self) -> Result<()> {
     let fd = self.device.as_raw_fd();
