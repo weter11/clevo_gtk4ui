@@ -164,16 +164,15 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         temp_spin.connect_value_changed(move |spin| {
-    let idx = row_clone.index();
-    if idx >= 0 {
-        let mut crv = curve_clone.borrow_mut();
-        let idx = idx as usize;
-        if idx < crv.points.len() {
-            crv.points[idx].0 = spin.value() as u8;
-            drawing_clone.queue_draw();
-        }
-    }
-});
+            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+                let mut crv = curve_clone.borrow_mut();
+                let idx = idx as usize;
+                if idx < crv.points.len() {
+                    crv.points[idx].0 = spin.value() as u8;
+                    drawing_clone.queue_draw();
+                }
+            }
+        });
 
         row.add_suffix(&temp_spin);
         row.add_suffix(&Label::new(Some("°C")));
@@ -187,16 +186,15 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         speed_spin.connect_value_changed(move |spin| {
-    let idx = row_clone.index();
-    if idx >= 0 {
-        let mut crv = curve_clone.borrow_mut();
-        let idx = idx as usize;
-        if idx < crv.points.len() {
-            crv.points[idx].1 = spin.value() as u8;
-            drawing_clone.queue_draw();
-        }
-    }
-});
+            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+                let mut crv = curve_clone.borrow_mut();
+                let idx = idx as usize;
+                if idx < crv.points.len() {
+                    crv.points[idx].1 = spin.value() as u8;
+                    drawing_clone.queue_draw();
+                }
+            }
+        });
 
         row.add_suffix(&speed_spin);
         row.add_suffix(&Label::new(Some("%")));
@@ -210,21 +208,20 @@ impl FanCurveEditor {
         let list_clone = list.clone();
         let row_clone = row.clone();
         delete_btn.connect_clicked(move |_| {
-    let idx = row_clone.index();
-    if idx >= 0 {
-        let mut crv = curve_clone.borrow_mut();
-        let idx = idx as usize;
-
-        if crv.points.len() > 1 && idx < crv.points.len() {
-            crv.points.remove(idx);
-            drop(crv);
-
-            list_clone.remove(&row_clone);
-            Self::reindex_rows(&list_clone);
-            drawing_clone.queue_draw();
-        }
-    }
-});
+            if let Some(idx) = list_clone.index_of_child(&row_clone) {
+                let mut crv = curve_clone.borrow_mut();
+                let idx = idx as usize;
+                
+                if crv.points.len() > 1 && idx < crv.points.len() {
+                    crv.points.remove(idx);
+                    drop(crv);
+                    
+                    list_clone.remove(&row_clone);
+                    Self::reindex_rows(&list_clone);
+                    drawing_clone.queue_draw();
+                }
+            }
+        });
 
         row.add_suffix(&delete_btn);
         row
