@@ -22,9 +22,10 @@ pub fn create_page(
     let content = build_tuning_content(config.clone(), dbus_client.clone());
     scrolled.set_child(Some(&content));
     
-    // Only update the header label, not rebuild everything
-    let content_weak = content.downgrade();
+    // Rebuild content when profile changes
+    let scrolled_weak = scrolled.downgrade();
     let config_clone = config.clone();
+    let dbus_clone = dbus_client.clone();
     let mut last_profile = config.borrow().data.current_profile.clone();
     
     gtk::glib::timeout_add_seconds_local(1, move || {
@@ -33,13 +34,10 @@ pub fn create_page(
         if current_profile != last_profile {
             last_profile = current_profile.clone();
             
-            // Only update the header label, don't rebuild
-            if let Some(content_box) = content_weak.upgrade() {
-                if let Some(first_child) = content_box.first_child() {
-                    if let Ok(header) = first_child.downcast::<Label>() {
-                        header.set_text(&format!("Editing Profile: {}", current_profile));
-                    }
-                }
+            // Rebuild the entire content with new profile
+            if let Some(scrolled) = scrolled_weak.upgrade() {
+                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone());
+                scrolled.set_child(Some(&new_content));
             }
         }
         
@@ -124,6 +122,26 @@ fn build_tuning_content(
         });
         
         let reset_button = Button::with_label("↺ Reset to Saved");
+        
+        let config_clone = config.clone();
+        let dbus_clone = dbus_client.clone();
+        let profile_name = profile.name.clone();
+        reset_button.connect_clicked(move |_| {
+            // Reload config from disk
+            if let Ok(loaded_config) = Config::load() {
+                let mut cfg = config_clone.borrow_mut();
+                cfg.data = loaded_config.data;
+                drop(cfg);
+                
+                // Apply the reloaded profile
+                if let Some(prof) = config_clone.borrow().data.profiles.iter()
+                    .find(|p| p.name == profile_name).cloned() {
+                    if let Some(client) = dbus_clone.borrow().as_ref() {
+                        let _ = client.apply_profile(&prof);
+                    }
+                }
+            }
+        });
         
         button_box.append(&apply_button);
         button_box.append(&reset_button);
@@ -829,6 +847,29 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
                 point_row.add_suffix(&temp_box);
                 point_row.add_suffix(&speed_box);
                 
+                // Add delete button
+                let delete_btn = Button::from_icon_name("user-trash-symbolic");
+                delete_btn.add_css_class("destructive-action");
+                delete_btn.set_valign(gtk::Align::Center);
+                delete_btn.set_tooltip_text(Some("Delete point"));
+                
+                let config_clone = config.clone();
+                let profile_name = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                delete_btn.connect_clicked(move |_| {
+                    let mut cfg = config_clone.borrow_mut();
+                    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+                        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id_copy) {
+                            if curve.points.len() > 2 && point_idx < curve.points.len() {
+                                curve.points.remove(point_idx);
+                            }
+                        }
+                    }
+                });
+                
+                point_row.add_suffix(&delete_btn);
+                
                 let config_clone = config.clone();
                 let profile_name_clone = profile.name.clone();
                 let fan_id_copy = fan_id as u32;
@@ -868,6 +909,7 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
             let fan_id_copy = fan_id as u32;
             add_button.connect_clicked(move |_| {
                 add_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy);
+                // Note: UI will be rebuilt on next profile change or save
             });
             
             add_point_row.add_suffix(&add_button);
