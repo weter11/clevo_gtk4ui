@@ -3,7 +3,6 @@ use std::fs;
 use std::path::Path;
 use tuxedo_common::types::*;
 use crate::tuxedo_io::TuxedoIo;
-// use tuxedo_io::TuxedoIo;
 
 fn get_cpu_count() -> Result<u32> {
     let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
@@ -27,7 +26,6 @@ pub fn set_cpu_governor(governor: &str) -> Result<()> {
 }
 
 pub fn set_cpu_frequency_limits(min_freq: u64, max_freq: u64) -> Result<()> {
-    // Check if frequency control is available
     let min_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq";
     let max_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq";
     
@@ -53,7 +51,6 @@ pub fn set_cpu_frequency_limits(min_freq: u64, max_freq: u64) -> Result<()> {
 }
 
 pub fn set_cpu_boost(enabled: bool) -> Result<()> {
-    // Try AMD boost
     let amd_path = "/sys/devices/system/cpu/cpufreq/boost";
     if Path::new(amd_path).exists() {
         fs::write(amd_path, if enabled { "1" } else { "0" })?;
@@ -61,7 +58,6 @@ pub fn set_cpu_boost(enabled: bool) -> Result<()> {
         return Ok(());
     }
     
-    // Try Intel turbo (inverted logic)
     let intel_path = "/sys/devices/system/cpu/intel_pstate/no_turbo";
     if Path::new(intel_path).exists() {
         fs::write(intel_path, if enabled { "0" } else { "1" })?;
@@ -89,7 +85,6 @@ pub fn set_amd_pstate_status(status: &str) -> Result<()> {
         return Err(anyhow!("AMD pstate not available"));
     }
     
-    // Validate status
     if !["passive", "active", "guided"].contains(&status) {
         return Err(anyhow!("Invalid AMD pstate status: {}", status));
     }
@@ -137,7 +132,7 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
     // Apply screen settings
     apply_screen_settings(&profile.screen_settings)?;
     
-    // Apply fan settings
+    // Apply fan settings - update daemon state
     apply_fan_settings(&profile.fan_settings)?;
     
     log::info!("Profile '{}' applied successfully", profile.name);
@@ -189,7 +184,6 @@ fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
             log::info!("✅ Keyboard backlight applied successfully");
         }
         _ => {
-            // For all effect modes, use RgbKeyboardControl
             if let Ok(kbd) = RgbKeyboardControl::new() {
                 kbd.set_mode(&settings.mode)?;
                 log::info!("✅ Keyboard effect mode applied successfully");
@@ -202,9 +196,7 @@ fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     Ok(())
 }
 
-// Preview keyboard settings without saving to profile (for real-time preview)
 pub fn preview_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
-    // Apply keyboard settings immediately, ignoring control_enabled flag
     let base_path = find_keyboard_backlight_path()
         .ok_or_else(|| anyhow!("Keyboard backlight not found"))?;
     
@@ -245,7 +237,6 @@ fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
         return Ok(());
     }
     
-    // Try different backlight paths
     let backlight_paths = [
         "/sys/class/backlight/intel_backlight",
         "/sys/class/backlight/amdgpu_bl0",
@@ -282,7 +273,6 @@ pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
     let io = TuxedoIo::new()?;
     let profiles = io.get_available_profiles()?;
     
-    // Find profile by name and use its index directly (0..3)
     if let Some(profile_id) = profiles.iter().position(|p| p == profile_name) {
         io.set_performance_profile(profile_id as u32)?;
         log::info!("Set TDP profile to: {} (id: {})", profile_name, profile_id);
@@ -326,64 +316,24 @@ fn apply_fan_settings(settings: &FanSettings) -> Result<()> {
     
     log::info!("Applying fan settings: enabled={}", settings.control_enabled);
     
+    // Update the global fan daemon state
+    {
+        let mut state = crate::FAN_DAEMON_STATE.lock().unwrap();
+        if settings.control_enabled {
+            *state = Some(settings.clone());
+            log::info!("Fan daemon: enabled with {} curves", settings.curves.len());
+        } else {
+            *state = None;
+            log::info!("Fan daemon: disabled");
+        }
+    }
+    
     if !settings.control_enabled {
-        set_fan_auto(0)?; // This sets all fans to auto
+        set_fan_auto(0)?;
         log::info!("Set all fans to auto mode");
-        return Ok(());
     }
     
-    // Apply custom fan curves
-    let io = TuxedoIo::new()?;
-    for curve in &settings.curves {
-        if curve.fan_id < io.get_fan_count() {
-            match io.get_fan_temperature(curve.fan_id) {
-                Ok(temp) => {
-                    let speed = calculate_fan_speed_from_curve(&curve.points, temp as f32);
-                    let _ = set_fan_speed(curve.fan_id, speed as u32);
-                }
-                Err(e) => {
-                    log::warn!("Failed to get temperature for fan {}: {}", curve.fan_id, e);
-                }
-            }
-        }
-    }
-    
-    log::info!("Fan settings applied");
     Ok(())
-}
-
-fn calculate_fan_speed_from_curve(points: &[(u8, u8)], temp: f32) -> u32 {
-    if points.is_empty() {
-        return 50;
-    }
-    
-    if points.len() == 1 {
-        return points[0].1 as u32;
-    }
-    
-    let mut sorted_points = points.to_vec();
-    sorted_points.sort_by(|a, b| a.0.cmp(&b.0));
-    
-    if temp <= sorted_points[0].0 as f32 {
-        return sorted_points[0].1 as u32;
-    }
-    
-    if temp >= sorted_points[sorted_points.len() - 1].0 as f32 {
-        return sorted_points[sorted_points.len() - 1].1 as u32;
-    }
-    
-    for i in 0..sorted_points.len() - 1 {
-        let (temp1, speed1) = sorted_points[i];
-        let (temp2, speed2) = sorted_points[i + 1];
-        
-        if temp >= temp1 as f32 && temp <= temp2 as f32 {
-            let ratio = (temp - temp1 as f32) / (temp2 as f32 - temp1 as f32);
-            let speed = speed1 as f32 + ratio * (speed2 as f32 - speed1 as f32);
-            return speed as u32;
-        }
-    }
-    
-    50
 }
 
 pub fn set_webcam_state(enabled: bool) -> Result<()> {
@@ -482,7 +432,6 @@ impl RgbKeyboardControl {
         Err(anyhow!("No RGB keyboard backlight found"))
     }
     
-    /// Set RGB color for keyboard backlight
     pub fn set_color(&self, red: u8, green: u8, blue: u8) -> Result<()> {
         let color_path = format!("{}/multi_intensity", self.base_path);
         if !Path::new(&color_path).exists() {
@@ -496,7 +445,6 @@ impl RgbKeyboardControl {
         Ok(())
     }
     
-    /// Set keyboard brightness (0-100%)
     pub fn set_brightness(&self, brightness: u8) -> Result<()> {
         let brightness_path = format!("{}/brightness", self.base_path);
         let max_brightness_path = format!("{}/max_brightness", self.base_path);
@@ -514,7 +462,6 @@ impl RgbKeyboardControl {
         Ok(())
     }
     
-    /// Get current brightness (0-100%)
     pub fn get_brightness(&self) -> Result<u8> {
         let brightness_path = format!("{}/brightness", self.base_path);
         let max_brightness_path = format!("{}/max_brightness", self.base_path);
@@ -532,7 +479,6 @@ impl RgbKeyboardControl {
         Ok(percent)
     }
     
-    /// Set keyboard mode (if supported)
     pub fn set_mode(&self, mode: &tuxedo_common::types::KeyboardMode) -> Result<()> {
         use tuxedo_common::types::KeyboardMode;
         match mode {
@@ -541,7 +487,6 @@ impl RgbKeyboardControl {
                 self.set_brightness(*brightness)?;
             }
             KeyboardMode::Breathe { r, g, b, brightness, speed } => {
-                // Some keyboards support breathing mode via sysfs
                 let mode_path = format!("{}/mode", self.base_path);
                 if Path::new(&mode_path).exists() {
                     fs::write(&mode_path, "breathing")?;
@@ -613,4 +558,3 @@ impl RgbKeyboardControl {
         Ok(())
     }
 }
-
