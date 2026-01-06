@@ -1,5 +1,5 @@
 use gtk::prelude::*;
-use gtk::{Box, Button, DrawingArea, Label, Orientation};
+use gtk::{Box, Button, DrawingArea, Label, Orientation, SpinButton};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -11,6 +11,7 @@ pub struct FanCurveEditor {
     pub container: Box,
     pub curve: Rc<RefCell<FanCurve>>,
     drawing_area: DrawingArea,
+    points_list: gtk::ListBox,
 }
 
 impl FanCurveEditor {
@@ -35,9 +36,9 @@ impl FanCurveEditor {
 
         // Drawing area for curve visualization
         let drawing_area = DrawingArea::new();
-        drawing_area.set_content_width(400);
-        drawing_area.set_content_height(300);
-        drawing_area.set_vexpand(true);
+        drawing_area.set_content_width(600);
+        drawing_area.set_content_height(400);
+        drawing_area.set_vexpand(false);
         drawing_area.set_hexpand(true);
         
         let curve_clone = curve.clone();
@@ -45,7 +46,9 @@ impl FanCurveEditor {
             Self::draw_curve(cr, width, height, &curve_clone.borrow());
         });
 
-        container.append(&drawing_area);
+        let frame = gtk::Frame::new(None);
+        frame.set_child(Some(&drawing_area));
+        container.append(&frame);
 
         // Points editor
         let points_group = adw::PreferencesGroup::builder()
@@ -56,19 +59,6 @@ impl FanCurveEditor {
         let points_list = gtk::ListBox::new();
         points_list.set_selection_mode(gtk::SelectionMode::None);
         points_list.add_css_class("boxed-list");
-        
-        // Initial rows
-        for (i, (temp, speed)) in curve.borrow().points.iter().enumerate() {
-            let row = Self::create_point_row(
-                i,
-                *temp,
-                *speed,
-                curve.clone(),
-                drawing_area.clone(),
-                points_list.clone(),
-            );
-            points_list.append(&row);
-        }
 
         let scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -97,20 +87,10 @@ impl FanCurveEditor {
             let new_temp = crv.points.last().map(|p| p.0 + 10).unwrap_or(50);
             let new_speed = 50;
             crv.points.push((new_temp, new_speed));
-
-            let index = crv.points.len() - 1;
             drop(crv);
                 
-            let row = Self::create_point_row(
-                index,
-                new_temp,
-                new_speed,
-                curve_clone.clone(),
-                drawing_clone.clone(),
-                list_clone.clone(),
-            );
-            list_clone.append(&row);
-            Self::reindex_rows(&list_clone);
+            // Rebuild all rows
+            Self::rebuild_points_list(&list_clone, &curve_clone, &drawing_clone);
             drawing_clone.queue_draw();
         });
 
@@ -137,10 +117,41 @@ impl FanCurveEditor {
 
         container.append(&info_box);
 
-        Self {
+        let editor = Self {
             container,
             curve,
             drawing_area,
+            points_list: points_list.clone(),
+        };
+        
+        // Initial population of points list
+        editor.rebuild_points_list(&points_list, &editor.curve, &editor.drawing_area);
+        
+        editor
+    }
+
+    fn rebuild_points_list(
+        list: &gtk::ListBox,
+        curve: &Rc<RefCell<FanCurve>>,
+        drawing_area: &DrawingArea,
+    ) {
+        // Clear all existing rows
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        
+        // Recreate all rows from current curve data
+        let points = curve.borrow().points.clone();
+        for (index, (temp, speed)) in points.iter().enumerate() {
+            let row = Self::create_point_row(
+                index,
+                *temp,
+                *speed,
+                curve.clone(),
+                drawing_area.clone(),
+                list.clone(),
+            );
+            list.append(&row);
         }
     }
 
@@ -156,105 +167,87 @@ impl FanCurveEditor {
         row.set_title(&format!("Point {}", index + 1));
 
         // ---- Temperature ----
-        let temp_adj = gtk::Adjustment::new(temp as f64, 0.0, 100.0, 1.0, 5.0, 0.0);
-        let temp_spin = gtk::SpinButton::new(Some(&temp_adj), 1.0, 0);
+        let temp_spin = SpinButton::with_range(0.0, 100.0, 1.0);
+        temp_spin.set_value(temp as f64);
+        temp_spin.set_valign(gtk::Align::Center);
 
         let curve_clone = curve.clone();
         let drawing_clone = drawing_area.clone();
         let list_clone = list.clone();
-        let row_clone = row.clone();
         temp_spin.connect_value_changed(move |spin| {
-            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
-                let mut crv = curve_clone.borrow_mut();
-                if idx < crv.points.len() {
-                    crv.points[idx].0 = spin.value() as u8;
-                    drawing_clone.queue_draw();
-                }
+            let new_temp = spin.value() as u8;
+            let mut crv = curve_clone.borrow_mut();
+            if index < crv.points.len() {
+                crv.points[index].0 = new_temp;
+                drop(crv);
+                drawing_clone.queue_draw();
             }
         });
+
+        let temp_label = Label::new(Some("°C"));
+        temp_label.set_margin_start(4);
+        temp_label.set_valign(gtk::Align::Center);
 
         row.add_suffix(&temp_spin);
-        row.add_suffix(&Label::new(Some("°C")));
+        row.add_suffix(&temp_label);
 
         // ---- Speed ----
-        let speed_adj = gtk::Adjustment::new(speed as f64, 0.0, 100.0, 1.0, 5.0, 0.0);
-        let speed_spin = gtk::SpinButton::new(Some(&speed_adj), 1.0, 0);
+        let speed_spin = SpinButton::with_range(0.0, 100.0, 1.0);
+        speed_spin.set_value(speed as f64);
+        speed_spin.set_valign(gtk::Align::Center);
+        speed_spin.set_margin_start(12);
 
         let curve_clone = curve.clone();
         let drawing_clone = drawing_area.clone();
-        let list_clone = list.clone();
-        let row_clone = row.clone();
         speed_spin.connect_value_changed(move |spin| {
-            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
-                let mut crv = curve_clone.borrow_mut();
-                if idx < crv.points.len() {
-                    crv.points[idx].1 = spin.value() as u8;
-                    drawing_clone.queue_draw();
-                }
+            let new_speed = spin.value() as u8;
+            let mut crv = curve_clone.borrow_mut();
+            if index < crv.points.len() {
+                crv.points[index].1 = new_speed;
+                drop(crv);
+                drawing_clone.queue_draw();
             }
         });
 
+        let speed_label = Label::new(Some("%"));
+        speed_label.set_margin_start(4);
+        speed_label.set_valign(gtk::Align::Center);
+
         row.add_suffix(&speed_spin);
-        row.add_suffix(&Label::new(Some("%")));
+        row.add_suffix(&speed_label);
 
         // ---- Delete ----
-        let delete_btn = Button::from_icon_name("trash-symbolic");
+        let delete_btn = Button::from_icon_name("user-trash-symbolic");
+        delete_btn.set_tooltip_text(Some("Delete this point"));
+        delete_btn.set_valign(gtk::Align::Center);
+        delete_btn.set_margin_start(12);
+        delete_btn.add_css_class("flat");
         delete_btn.add_css_class("destructive-action");
 
         let curve_clone = curve.clone();
         let drawing_clone = drawing_area.clone();
         let list_clone = list.clone();
-        let row_clone = row.clone();
         delete_btn.connect_clicked(move |_| {
-            if let Some(idx) = Self::find_row_index(&list_clone, &row_clone) {
-                let mut crv = curve_clone.borrow_mut();
+            let mut crv = curve_clone.borrow_mut();
+            
+            // Don't allow deleting if we only have 2 points (minimum requirement)
+            if crv.points.len() <= 2 {
+                drop(crv);
+                return;
+            }
+            
+            if index < crv.points.len() {
+                crv.points.remove(index);
+                drop(crv);
                 
-                if crv.points.len() > 1 && idx < crv.points.len() {
-                    crv.points.remove(idx);
-                    drop(crv);
-                    
-                    list_clone.remove(&row_clone);
-                    Self::reindex_rows(&list_clone);
-                    drawing_clone.queue_draw();
-                }
+                // Rebuild entire list to update indices
+                Self::rebuild_points_list(&list_clone, &curve_clone, &drawing_clone);
+                drawing_clone.queue_draw();
             }
         });
 
         row.add_suffix(&delete_btn);
         row
-    }
-
-    fn reindex_rows(list: &gtk::ListBox) {
-        let mut i = 0;
-        let mut child = list.first_child();
-
-        while let Some(widget) = child {
-            let next = widget.next_sibling();
-
-            if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
-                row.set_title(&format!("Point {}", i + 1));
-                i += 1;
-            }
-
-            child = next;
-        }
-    }
-
-    fn find_row_index(list: &gtk::ListBox, target_row: &adw::ActionRow) -> Option<usize> {
-        let mut index = 0;
-        let mut child = list.first_child();
-
-        while let Some(widget) = child {
-            if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
-                if row == *target_row {
-                    return Some(index);
-                }
-                index += 1;
-            }
-            child = widget.next_sibling();
-        }
-
-        None
     }
 
     fn draw_curve(cr: &gtk::cairo::Context, width: i32, height: i32, curve: &FanCurve) {
