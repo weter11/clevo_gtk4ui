@@ -806,7 +806,7 @@ fn create_screen_tuning_section(
     group
 }
 
-fn apply_brightness_to_system(brightness: u8) -> Result<(), Box<dyn std::error::Error>> {
+fn apply_brightness_to_system(brightness: u8) -> anyhow::Result<()> {
     use std::fs;
     use std::io::Write;
     
@@ -835,7 +835,7 @@ fn apply_brightness_to_system(brightness: u8) -> Result<(), Box<dyn std::error::
         }
     }
     
-    Err("No backlight device found".into())
+    Err(anyhow::anyhow!("No backlight device found"))
 }
 
 fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
