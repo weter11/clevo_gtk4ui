@@ -316,6 +316,23 @@ impl FanCurveEditor {
         cr.move_to(w / 2.0 - 50.0, h - 10.0);
         cr.show_text("Temperature (°C)").unwrap();
 
+        // Draw axis value labels
+        for i in 0..=10 {
+            // Y-axis values (0-100%)
+            let y_val = 100 - i * 10;
+            let y = margin_top + (chart_height * i as f64 / 10.0);
+            let s = format!("{}%", y_val);
+            cr.move_to(margin_left - 30.0, y + 4.0);
+            cr.show_text(&s).unwrap();
+
+            // X-axis values (0-100°C)
+            let x_val = i * 10;
+            let x = margin_left + (chart_width * i as f64 / 10.0);
+            let s = format!("{}°", x_val);
+            cr.move_to(x - 10.0, h - margin_bottom + 20.0);
+            cr.show_text(&s).unwrap();
+        }
+
         // Draw curve if we have points
         if curve.points.len() >= 2 {
             let mut sorted_points = curve.points.clone();

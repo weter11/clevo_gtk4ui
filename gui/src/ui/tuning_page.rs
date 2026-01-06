@@ -1,5 +1,6 @@
 use gtk::prelude::*;
 use gtk::{Box, Orientation, ScrolledWindow, Scale, Button, Label};
+use crate::ui::fan_curve_editor::FanCurveEditor;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -8,7 +9,6 @@ use std::rc::Rc;
 use crate::config::Config;
 use crate::dbus_client::DbusClient;
 use tuxedo_common::types::{FanCurve, Profile};
-use super::fan_curve_editor::FanCurveEditor;
 
 pub fn create_page(
     config: Rc<RefCell<Config>>,
@@ -92,7 +92,8 @@ fn build_tuning_content(
         let screen_section = create_screen_tuning_section(&profile, config.clone());
         main_box.append(&screen_section);
         
-        let (fans_section, fan_editors) = create_fans_tuning_section(&profile, config.clone());
+        let fan_editors = Rc::new(RefCell::new(Vec::new()));
+        let fans_section = create_fans_tuning_section(&profile, config.clone(), fan_editors.clone());
         main_box.append(&fans_section);
         
         let button_box = Box::new(Orientation::Horizontal, 12);
@@ -791,12 +792,11 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
 fn create_fans_tuning_section(
     profile: &Profile,
     config: Rc<RefCell<Config>>,
-) -> (adw::PreferencesGroup, Vec<FanCurveEditor>) {
+    fan_editors: Rc<RefCell<Vec<FanCurveEditor>>>,
+) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Fans")
         .build();
-
-    let mut editors = Vec::new();
 
     let control_row = adw::SwitchRow::builder()
         .title("Control fans")
@@ -805,47 +805,55 @@ fn create_fans_tuning_section(
 
     control_row.set_active(profile.fan_settings.control_enabled);
 
+    let fan_editors_container = Box::new(Orientation::Vertical, 12);
+    group.add(&fan_editors_container);
+
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
+    let fan_editors_container_clone = fan_editors_container.clone();
+    let fan_editors_clone = fan_editors.clone();
+
     control_row.connect_active_notify(move |row| {
         let mut cfg = config_clone.borrow_mut();
         if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
             prof.fan_settings.control_enabled = row.is_active();
         }
-    });
 
-    group.add(&control_row);
+        while let Some(child) = fan_editors_container_clone.first_child() {
+            fan_editors_container_clone.remove(&child);
+        }
+        fan_editors_clone.borrow_mut().clear();
 
-    if profile.fan_settings.control_enabled {
-        let fan_count = if profile.fan_settings.curves.is_empty() {
-            2 // Default to 2 fans if no curves are defined
-        } else {
-            profile.fan_settings.curves.len().max(1)
-        };
+        if row.is_active() {
+            let cfg = config_clone.borrow();
+            let prof = cfg.data.profiles.iter().find(|p| p.name == profile_name).unwrap();
 
-        for fan_id in 0..fan_count {
-            let curve = profile.fan_settings.curves
-                .iter()
-                .find(|c| c.fan_id == fan_id as u32)
-                .cloned()
-                .unwrap_or_else(|| FanCurve {
+            let fan_count = if prof.fan_settings.curves.is_empty() { 2 } else { prof.fan_settings.curves.len().max(1) };
+
+            for fan_id in 0..fan_count {
+                let curve = prof.fan_settings.curves.iter().find(|c| c.fan_id == fan_id as u32).cloned().unwrap_or_else(|| FanCurve {
                     fan_id: fan_id as u32,
                     points: vec![(30, 0), (50, 25), (70, 75), (85, 100)],
                 });
+                let editor = FanCurveEditor::new(fan_id as u32, curve.clone());
+                fan_editors_container_clone.append(&editor.container);
+                fan_editors_clone.borrow_mut().push(editor);
+            }
+        }
+    });
 
+    if profile.fan_settings.control_enabled {
+        let fan_count = if profile.fan_settings.curves.is_empty() { 2 } else { profile.fan_settings.curves.len().max(1) };
+        for fan_id in 0..fan_count {
+            let curve = profile.fan_settings.curves.iter().find(|c| c.fan_id == fan_id as u32).cloned().unwrap_or_else(|| FanCurve {
+                fan_id: fan_id as u32,
+                points: vec![(30, 0), (50, 25), (70, 75), (85, 100)],
+            });
             let editor = FanCurveEditor::new(fan_id as u32, curve.clone());
-
-            let expander = adw::ExpanderRow::builder()
-                .title(&format!("Fan {} Curve", fan_id))
-                .subtitle(&format!("{} points", curve.points.len()))
-                .build();
-
-            expander.add_row(&editor.container);
-            group.add(&expander);
-
-            editors.push(editor);
+            fan_editors.borrow_mut().push(editor.clone());
+            fan_editors_container.append(&editor.container);
         }
     }
 
-    (group, editors)
+    group
 }
