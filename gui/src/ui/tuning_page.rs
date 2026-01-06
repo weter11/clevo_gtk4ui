@@ -20,7 +20,7 @@ pub fn create_page(
         .hexpand(true)
         .build();
     
-    let content = build_tuning_content(config.clone(), dbus_client.clone());
+    let content = build_tuning_content(config.clone(), dbus_client.clone(), scrolled.clone());
     scrolled.set_child(Some(&content));
     
     // Rebuild content when profile changes
@@ -37,7 +37,7 @@ pub fn create_page(
             
             // Rebuild the entire content with new profile
             if let Some(scrolled) = scrolled_weak.upgrade() {
-                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone());
+                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone(), scrolled.clone());
                 scrolled.set_child(Some(&new_content));
             }
         }
@@ -51,6 +51,7 @@ pub fn create_page(
 fn build_tuning_content(
     config: Rc<RefCell<Config>>,
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    scrolled: ScrolledWindow,
 ) -> Box {
     let main_box = Box::new(Orientation::Vertical, 12);
     main_box.set_margin_top(24);
@@ -86,10 +87,15 @@ fn build_tuning_content(
         let cpu_section = create_cpu_tuning_section(&profile, config.clone(), dbus_client.clone(), cpu_info);
         main_box.append(&cpu_section);
         
-        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone(), dbus_client.clone());
+        let keyboard_section = create_keyboard_tuning_section(
+            &profile, 
+            config.clone(), 
+            dbus_client.clone(),
+            scrolled.clone()
+        );
         main_box.append(&keyboard_section);
         
-        let screen_section = create_screen_tuning_section(&profile, config.clone());
+        let screen_section = create_screen_tuning_section(&profile, config.clone(), dbus_client.clone());
         main_box.append(&screen_section);
         
         let fan_editors = Rc::new(RefCell::new(Vec::new()));
@@ -166,8 +172,6 @@ fn build_tuning_content(
     
     main_box
 }
-
-// ... rest of the file remains the same ...
 
 fn create_tdp_section(
     profile: &Profile,
@@ -468,6 +472,7 @@ fn create_keyboard_tuning_section(
     profile: &Profile,
     config: Rc<RefCell<Config>>,
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    scrolled: ScrolledWindow,
 ) -> adw::PreferencesGroup {
     use tuxedo_common::types::KeyboardMode;
     
@@ -524,6 +529,7 @@ fn create_keyboard_tuning_section(
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
     let dbus_clone = dbus_client.clone();
+    let scrolled_clone = scrolled.clone();
     mode_row.connect_selected_notify(move |row| {
         let mode_idx = row.selected();
         let mut cfg = config_clone.borrow_mut();
@@ -544,6 +550,11 @@ fn create_keyboard_tuning_section(
                 let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
+        drop(cfg);
+        
+        // Rebuild the entire tuning page to show new controls
+        let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone(), scrolled_clone.clone());
+        scrolled_clone.set_child(Some(&new_content));
     });
     
     group.add(&mode_row);
@@ -669,7 +680,7 @@ fn add_brightness_control(
     brightness: u8,
     config: Rc<RefCell<Config>>,
     profile_name: String,
-    _dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
 ) {
     let bright_row = adw::ActionRow::builder().title("Brightness").build();
     let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
@@ -695,6 +706,10 @@ fn add_brightness_control(
                     *brightness = br_val;
                 }
                 _ => {}
+            }
+            
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
     });
@@ -742,7 +757,11 @@ fn add_speed_control(
     });
 }
 
-fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+fn create_screen_tuning_section(
+    profile: &Profile, 
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Screen")
         .build();
@@ -778,11 +797,22 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
     
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
+    let dbus_clone = dbus_client.clone();
     brightness_scale.connect_value_changed(move |scale| {
         let value = scale.value() as u8;
         let mut cfg = config_clone.borrow_mut();
         if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
             prof.screen_settings.brightness = value;
+            
+            // Apply brightness immediately if not under system control
+            if !prof.screen_settings.system_control {
+                drop(cfg);
+                
+                // Apply brightness to system
+                if let Err(e) = apply_brightness_to_system(value) {
+                    eprintln!("Failed to apply brightness: {}", e);
+                }
+            }
         }
     });
     
@@ -794,6 +824,39 @@ fn create_fans_tuning_section(
     config: Rc<RefCell<Config>>,
     fan_editors: Rc<RefCell<Vec<FanCurveEditor>>>,
 ) -> adw::PreferencesGroup {
+fn apply_brightness_to_system(brightness: u8) -> anyhow::Result<()> {
+    use std::fs;
+    use std::io::Write;
+    
+    // Find backlight device
+    let backlight_base = "/sys/class/backlight";
+    let entries = fs::read_dir(backlight_base)?;
+    
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let max_brightness_path = path.join("max_brightness");
+        let brightness_path = path.join("brightness");
+        
+        if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+            if let Ok(max_brightness) = max_str.trim().parse::<u32>() {
+                let target_brightness = (max_brightness as f64 * brightness as f64 / 100.0) as u32;
+                
+                // Write brightness value
+                if let Ok(mut file) = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&brightness_path) 
+                {
+                    let _ = write!(file, "{}", target_brightness);
+                    return Ok(());
+                }
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("No backlight device found"))
+}
+
+fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Fans")
         .build();
@@ -821,6 +884,126 @@ fn create_fans_tuning_section(
 
         while let Some(child) = fan_editors_container_clone.first_child() {
             fan_editors_container_clone.remove(&child);
+    });
+    
+    group.add(&control_row);
+    
+    if profile.fan_settings.control_enabled {
+        let fan_count = if profile.fan_settings.curves.is_empty() {
+            2
+        } else {
+            profile.fan_settings.curves.len().max(1)
+        };
+        
+        for fan_id in 0..fan_count {
+            let curve = profile.fan_settings.curves
+                .iter()
+                .find(|c| c.fan_id == fan_id as u32)
+                .cloned()
+                .unwrap_or_else(|| {
+                    FanCurve {
+                        fan_id: fan_id as u32,
+                        points: vec![(0, 0), (50, 50), (80, 100)],
+                    }
+                });
+            
+            let expander = adw::ExpanderRow::builder()
+                .title(&format!("Fan {} Curve", fan_id))
+                .subtitle(&format!("{} points", curve.points.len()))
+                .build();
+            
+            for (i, (temp, speed)) in curve.points.iter().enumerate() {
+                let point_row = adw::ActionRow::builder()
+                    .title(&format!("Point {}", i + 1))
+                    .build();
+                
+                let temp_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let temp_label = gtk::Label::new(Some("Temp (°C):"));
+                let temp_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                temp_spin.set_value(*temp as f64);
+                temp_spin.set_width_chars(5);
+                temp_box.append(&temp_label);
+                temp_box.append(&temp_spin);
+                
+                let speed_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                let speed_label = gtk::Label::new(Some("Speed (%):"));
+                let speed_spin = gtk::SpinButton::with_range(0.0, 100.0, 1.0);
+                speed_spin.set_value(*speed as f64);
+                speed_spin.set_width_chars(5);
+                speed_box.append(&speed_label);
+                speed_box.append(&speed_spin);
+                
+                point_row.add_suffix(&temp_box);
+                point_row.add_suffix(&speed_box);
+                
+                // Add delete button
+                let delete_btn = Button::from_icon_name("user-trash-symbolic");
+                delete_btn.add_css_class("destructive-action");
+                delete_btn.set_valign(gtk::Align::Center);
+                delete_btn.set_tooltip_text(Some("Delete point"));
+                
+                let config_clone = config.clone();
+                let profile_name = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                delete_btn.connect_clicked(move |_| {
+                    let mut cfg = config_clone.borrow_mut();
+                    if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
+                        if let Some(curve) = prof.fan_settings.curves.iter_mut().find(|c| c.fan_id == fan_id_copy) {
+                            if curve.points.len() > 2 && point_idx < curve.points.len() {
+                                curve.points.remove(point_idx);
+                            }
+                        }
+                    }
+                });
+                
+                point_row.add_suffix(&delete_btn);
+                
+                let config_clone = config.clone();
+                let profile_name_clone = profile.name.clone();
+                let fan_id_copy = fan_id as u32;
+                let point_idx = i;
+                
+                let config_for_temp = config_clone.clone();
+                let profile_for_temp = profile_name_clone.clone();
+                let speed_spin_clone = speed_spin.clone();
+                temp_spin.connect_value_changed(move |temp_spin| {
+                    let temp_val = temp_spin.value() as u8;
+                    let speed_val = speed_spin_clone.value() as u8;
+                    update_fan_curve_point(&config_for_temp, &profile_for_temp, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                let config_for_speed = config_clone.clone();
+                let profile_for_speed = profile_name_clone.clone();
+                let temp_spin_clone = temp_spin.clone();
+                speed_spin.connect_value_changed(move |speed_spin| {
+                    let temp_val = temp_spin_clone.value() as u8;
+                    let speed_val = speed_spin.value() as u8;
+                    update_fan_curve_point(&config_for_speed, &profile_for_speed, fan_id_copy, point_idx, temp_val, speed_val);
+                });
+                
+                expander.add_row(&point_row);
+            }
+            
+            let add_point_row = adw::ActionRow::builder()
+                .title("Add Point")
+                .build();
+            
+            let add_button = Button::with_label("➕ Add");
+            add_button.add_css_class("suggested-action");
+            add_button.set_valign(gtk::Align::Center);
+            
+            let config_clone = config.clone();
+            let profile_name_clone = profile.name.clone();
+            let fan_id_copy = fan_id as u32;
+            add_button.connect_clicked(move |_| {
+                add_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy);
+            });
+            
+            add_point_row.add_suffix(&add_button);
+            expander.add_row(&add_point_row);
+            
+            group.add(&expander);
         }
         fan_editors_clone.borrow_mut().clear();
 
