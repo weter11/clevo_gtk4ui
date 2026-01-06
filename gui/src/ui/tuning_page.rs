@@ -19,7 +19,7 @@ pub fn create_page(
         .hexpand(true)
         .build();
     
-    let content = build_tuning_content(config.clone(), dbus_client.clone());
+    let content = build_tuning_content(config.clone(), dbus_client.clone(), scrolled.clone());
     scrolled.set_child(Some(&content));
     
     // Rebuild content when profile changes
@@ -36,7 +36,7 @@ pub fn create_page(
             
             // Rebuild the entire content with new profile
             if let Some(scrolled) = scrolled_weak.upgrade() {
-                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone());
+                let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone(), scrolled.clone());
                 scrolled.set_child(Some(&new_content));
             }
         }
@@ -50,6 +50,7 @@ pub fn create_page(
 fn build_tuning_content(
     config: Rc<RefCell<Config>>,
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    scrolled: ScrolledWindow,
 ) -> Box {
     let main_box = Box::new(Orientation::Vertical, 12);
     main_box.set_margin_top(24);
@@ -85,10 +86,15 @@ fn build_tuning_content(
         let cpu_section = create_cpu_tuning_section(&profile, config.clone(), dbus_client.clone(), cpu_info);
         main_box.append(&cpu_section);
         
-        let keyboard_section = create_keyboard_tuning_section(&profile, config.clone(), dbus_client.clone());
+        let keyboard_section = create_keyboard_tuning_section(
+            &profile, 
+            config.clone(), 
+            dbus_client.clone(),
+            scrolled.clone()
+        );
         main_box.append(&keyboard_section);
         
-        let screen_section = create_screen_tuning_section(&profile, config.clone());
+        let screen_section = create_screen_tuning_section(&profile, config.clone(), dbus_client.clone());
         main_box.append(&screen_section);
         
         let fans_section = create_fans_tuning_section(&profile, config.clone());
@@ -153,8 +159,6 @@ fn build_tuning_content(
     
     main_box
 }
-
-// ... rest of the file remains the same ...
 
 fn create_tdp_section(
     profile: &Profile,
@@ -455,6 +459,7 @@ fn create_keyboard_tuning_section(
     profile: &Profile,
     config: Rc<RefCell<Config>>,
     dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    scrolled: ScrolledWindow,
 ) -> adw::PreferencesGroup {
     use tuxedo_common::types::KeyboardMode;
     
@@ -511,6 +516,7 @@ fn create_keyboard_tuning_section(
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
     let dbus_clone = dbus_client.clone();
+    let scrolled_clone = scrolled.clone();
     mode_row.connect_selected_notify(move |row| {
         let mode_idx = row.selected();
         let mut cfg = config_clone.borrow_mut();
@@ -531,6 +537,11 @@ fn create_keyboard_tuning_section(
                 let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
+        drop(cfg);
+        
+        // Rebuild the entire tuning page to show new controls
+        let new_content = build_tuning_content(config_clone.clone(), dbus_clone.clone(), scrolled_clone.clone());
+        scrolled_clone.set_child(Some(&new_content));
     });
     
     group.add(&mode_row);
@@ -656,7 +667,7 @@ fn add_brightness_control(
     brightness: u8,
     config: Rc<RefCell<Config>>,
     profile_name: String,
-    _dbus_client: Rc<RefCell<Option<DbusClient>>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
 ) {
     let bright_row = adw::ActionRow::builder().title("Brightness").build();
     let bright_scale = Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
@@ -682,6 +693,10 @@ fn add_brightness_control(
                     *brightness = br_val;
                 }
                 _ => {}
+            }
+            
+            if let Some(client) = dbus_client.borrow().as_ref() {
+                let _ = client.preview_keyboard_settings(&prof.keyboard_settings);
             }
         }
     });
@@ -729,7 +744,11 @@ fn add_speed_control(
     });
 }
 
-fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
+fn create_screen_tuning_section(
+    profile: &Profile, 
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title("Screen")
         .build();
@@ -765,15 +784,58 @@ fn create_screen_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) 
     
     let config_clone = config.clone();
     let profile_name = profile.name.clone();
+    let dbus_clone = dbus_client.clone();
     brightness_scale.connect_value_changed(move |scale| {
         let value = scale.value() as u8;
         let mut cfg = config_clone.borrow_mut();
         if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
             prof.screen_settings.brightness = value;
+            
+            // Apply brightness immediately if not under system control
+            if !prof.screen_settings.system_control {
+                drop(cfg);
+                
+                // Apply brightness to system
+                if let Err(e) = apply_brightness_to_system(value) {
+                    eprintln!("Failed to apply brightness: {}", e);
+                }
+            }
         }
     });
     
     group
+}
+
+fn apply_brightness_to_system(brightness: u8) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::io::Write;
+    
+    // Find backlight device
+    let backlight_base = "/sys/class/backlight";
+    let entries = fs::read_dir(backlight_base)?;
+    
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let max_brightness_path = path.join("max_brightness");
+        let brightness_path = path.join("brightness");
+        
+        if let Ok(max_str) = fs::read_to_string(&max_brightness_path) {
+            if let Ok(max_brightness) = max_str.trim().parse::<u32>() {
+                let target_brightness = (max_brightness as f64 * brightness as f64 / 100.0) as u32;
+                
+                // Write brightness value
+                if let Ok(mut file) = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&brightness_path) 
+                {
+                    let _ = write!(file, "{}", target_brightness);
+                    return Ok(());
+                }
+            }
+        }
+    }
+    
+    Err("No backlight device found".into())
 }
 
 fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) -> adw::PreferencesGroup {
@@ -909,7 +971,6 @@ fn create_fans_tuning_section(profile: &Profile, config: Rc<RefCell<Config>>) ->
             let fan_id_copy = fan_id as u32;
             add_button.connect_clicked(move |_| {
                 add_fan_curve_point(&config_clone, &profile_name_clone, fan_id_copy);
-                // Note: UI will be rebuilt on next profile change or save
             });
             
             add_point_row.add_suffix(&add_button);
