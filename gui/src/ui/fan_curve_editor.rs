@@ -119,13 +119,13 @@ impl FanCurveEditor {
 
         let editor = Self {
             container,
-            curve,
-            drawing_area,
+            curve: curve.clone(),
+            drawing_area: drawing_area.clone(),
             points_list: points_list.clone(),
         };
         
         // Initial population of points list
-        editor.rebuild_points_list(&points_list, &editor.curve, &editor.drawing_area);
+        Self::rebuild_points_list(&points_list, &curve, &drawing_area);
         
         editor
     }
