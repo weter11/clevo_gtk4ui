@@ -112,7 +112,7 @@ fn build_tuning_content(
                 let mut cfg = config_clone.borrow_mut();
                 if let Some(prof) = cfg.data.profiles.iter_mut().find(|p| p.name == profile_name) {
                     prof.fan_settings.curves.clear();
-                    for editor in &fan_editors {
+                    for editor in fan_editors.borrow().iter() {
                         prof.fan_settings.curves.push(editor.get_curve());
                     }
                 }

@@ -67,12 +67,7 @@ impl FanCurveManager {
             };
             
             // Calculate speed from curve
-            let mut speed = self.interpolate_fan_speed(&curve.points, temp);
-
-            // Enforce minimum speed of 5% if not 0%
-            if speed > 0 && speed < 5 {
-                speed = 5;
-            }
+            let speed = self.interpolate_fan_speed(&curve.points, temp);
 
             // Only apply if speed has changed
             let last_speed = self.last_speeds.get(&curve.fan_id).cloned().unwrap_or(0);
