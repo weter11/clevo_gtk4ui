@@ -645,7 +645,7 @@ fn detect_gpu_info(path: &str, id: u32) -> Option<SimpleGpuInfo> {
     })
 }
 
-fn create_battery_section() -> (adw::PreferencesGroup, WidgetRefs) {
+fn create_battery_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
         .title("Battery")
         .build();
@@ -680,12 +680,61 @@ fn create_battery_section() -> (adw::PreferencesGroup, WidgetRefs) {
         .build();
     group.add(&power_row);
     
+    // Add battery charge control info
+    let charge_type_row = adw::ActionRow::builder()
+        .title("Charge Type")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_type_row);
+    
+    let charge_start_row = adw::ActionRow::builder()
+        .title("Charge Start Threshold")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_start_row);
+    
+    let charge_end_row = adw::ActionRow::builder()
+        .title("Charge End Threshold")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_end_row);
+    
+    // Load battery charge control info if available
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        if let Ok(charge_type) = client.get_battery_charge_type() {
+            let display_type = match charge_type.as_str() {
+                "standard" => "Standard",
+                "express" => "Express",
+                "primarily_ac" => "Primarily AC",
+                _ => &charge_type,
+            };
+            charge_type_row.set_subtitle(display_type);
+            charge_type_row.set_visible(true);
+        }
+        
+        if let Ok(start_threshold) = client.get_battery_charge_start_threshold() {
+            charge_start_row.set_subtitle(&format!("{}%", start_threshold));
+            charge_start_row.set_visible(true);
+        }
+        
+        if let Ok(end_threshold) = client.get_battery_charge_end_threshold() {
+            charge_end_row.set_subtitle(&format!("{}%", end_threshold));
+            charge_end_row.set_visible(true);
+        }
+    }
+    
     let refs = vec![
         ("status".to_string(), status_row),
         ("capacity".to_string(), capacity_row),
         ("voltage".to_string(), voltage_row),
         ("current".to_string(), current_row),
         ("power".to_string(), power_row),
+        ("charge_type".to_string(), charge_type_row),
+        ("charge_start".to_string(), charge_start_row),
+        ("charge_end".to_string(), charge_end_row),
     ];
     
     (group, refs)
