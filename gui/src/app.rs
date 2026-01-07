@@ -259,6 +259,8 @@ impl TuxedoApp {
 
 impl eframe::App for TuxedoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Handle keyboard shortcuts FIRST
+        self.shortcuts.handle_shortcuts(ctx, &mut self.state);
         // Handle background hardware updates
         self.handle_hardware_updates();
         
