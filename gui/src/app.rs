@@ -127,6 +127,7 @@ pub struct TuxedoApp {
     
     // Background update channel
     hw_update_rx: mpsc::UnboundedReceiver<HardwareUpdate>,
+    shortcuts: KeyboardShortcuts,
 }
 
 #[derive(Debug)]
