@@ -6,3 +6,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0"
+
+[workspace.dependencies]
+egui = "0.28.0"
+eframe = "0.28.0"

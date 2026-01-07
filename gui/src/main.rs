@@ -1,22 +1,18 @@
-mod application;
 mod config;
 mod dbus_client;
-mod ui;
+mod egui_ui;
 
-use gtk::glib;
+use eframe::NativeOptions;
+use egui_ui::app::TuxedoControlCenterApp;
 
-const APP_ID: &str = "com.tuxedo.ControlCenter";
-
-fn main() -> glib::ExitCode {
+fn main() -> eframe::Result<()> {
     // Initialize logging
     env_logger::init();
-    
-    // Initialize GTK
-    gtk::init().expect("Failed to initialize GTK");
-    
-    // Create application
-    let app = application::TuxedoApplication::new(APP_ID);
-    
-    // Run
-    app.run()
+
+    // Run the egui application
+    eframe::run_native(
+        "TUXEDO Control Center",
+        NativeOptions::default(),
+        Box::new(|_cc| Ok(Box::new(TuxedoControlCenterApp::new()))),
+    )
 }
