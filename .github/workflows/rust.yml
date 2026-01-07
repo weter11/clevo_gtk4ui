@@ -8,7 +8,7 @@ on:
   pull_request:
     branches:
       - main
-      - new_variant
+      - qt6_exp
 
 env:
   CARGO_TERM_COLOR: always
