@@ -16,7 +16,7 @@ pub struct FanCurveEditor {
 
 impl FanCurveEditor {
     pub fn new(fan_id: u32, initial_curve: FanCurve) -> Self {
-        let container = Box::new(Orientation::Vertical, 12);
+        let container = Box::new(Orientation::Horizontal, 12);
         container.set_margin_top(12);
         container.set_margin_bottom(12);
         container.set_margin_start(12);
@@ -24,36 +24,20 @@ impl FanCurveEditor {
 
         let curve = Rc::new(RefCell::new(initial_curve));
 
+        // Left side (config)
+        let left_box = Box::new(Orientation::Vertical, 12);
+        left_box.set_width_request(300);
+        container.append(&left_box);
+
         // Title
         let title = Label::new(Some(&format!("Fan {} Curve Editor", fan_id)));
         title.add_css_class("title-3");
-        container.append(&title);
-
-        // Description
-        let description = Label::new(Some("Set temperature (°C) and fan speed (%) points"));
-        description.add_css_class("dim-label");
-        container.append(&description);
-
-        // Drawing area for curve visualization
-        let drawing_area = DrawingArea::new();
-        drawing_area.set_content_width(600);
-        drawing_area.set_content_height(400);
-        drawing_area.set_vexpand(false);
-        drawing_area.set_hexpand(true);
-        
-        let curve_clone = curve.clone();
-        drawing_area.set_draw_func(move |_da, cr, width, height| {
-            Self::draw_curve(cr, width, height, &curve_clone.borrow());
-        });
-
-        let frame = gtk::Frame::new(None);
-        frame.set_child(Some(&drawing_area));
-        container.append(&frame);
+        left_box.append(&title);
 
         // Points editor
         let points_group = adw::PreferencesGroup::builder()
           .title("Curve Points")
-          .description("Add points to define the fan curve")
+          .description("Add or remove points to define the fan curve")
           .build();
 
         let points_list = gtk::ListBox::new();
@@ -64,37 +48,17 @@ impl FanCurveEditor {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .min_content_height(200)
-            .max_content_height(400)
+            .max_content_height(300)
             .child(&points_list)
             .build();
 
         points_group.add(&scrolled);
-        container.append(&points_group);
+        left_box.append(&points_group);
 
         // Add point button
         let add_button = Button::with_label("➕ Add Point");
         add_button.add_css_class("suggested-action");
-        
-        let curve_clone = curve.clone();
-        let drawing_clone = drawing_area.clone();
-        let list_clone = points_list.clone();
-        add_button.connect_clicked(move |_| {
-            let mut crv = curve_clone.borrow_mut();
-            if crv.points.len() >= 16 {
-                return;
-            }
-
-            let new_temp = crv.points.last().map(|p| p.0 + 10).unwrap_or(50);
-            let new_speed = 50;
-            crv.points.push((new_temp, new_speed));
-            drop(crv);
-                
-            // Rebuild all rows
-            Self::rebuild_points_list(&list_clone, &curve_clone, &drawing_clone);
-            drawing_clone.queue_draw();
-        });
-
-        container.append(&add_button);
+        left_box.append(&add_button);
 
         // Info labels
         let info_box = Box::new(Orientation::Vertical, 6);
@@ -115,7 +79,41 @@ impl FanCurveEditor {
         info3.add_css_class("caption");
         info_box.append(&info3);
 
-        container.append(&info_box);
+        left_box.append(&info_box);
+
+        // Right side (drawing area)
+        let drawing_area = DrawingArea::new();
+        drawing_area.set_content_width(500);
+        drawing_area.set_content_height(400);
+        drawing_area.set_hexpand(true);
+        drawing_area.set_vexpand(true);
+
+        let curve_clone = curve.clone();
+        drawing_area.set_draw_func(move |_da, cr, width, height| {
+            Self::draw_curve(cr, width, height, &curve_clone.borrow());
+        });
+
+        let frame = gtk::Frame::new(None);
+        frame.set_child(Some(&drawing_area));
+        container.append(&frame);
+
+        let curve_clone = curve.clone();
+        let drawing_clone = drawing_area.clone();
+        let list_clone = points_list.clone();
+        add_button.connect_clicked(move |_| {
+            let mut crv = curve_clone.borrow_mut();
+            if crv.points.len() >= 16 {
+                return;
+            }
+
+            let new_temp = crv.points.last().map(|p| p.0 + 10).unwrap_or(50);
+            let new_speed = 50;
+            crv.points.push((new_temp, new_speed));
+            drop(crv);
+
+            Self::rebuild_points_list(&list_clone, &curve_clone, &drawing_clone);
+            drawing_clone.queue_draw();
+        });
 
         let editor = Self {
             container,
@@ -315,6 +313,23 @@ impl FanCurveEditor {
         // X-axis label
         cr.move_to(w / 2.0 - 50.0, h - 10.0);
         cr.show_text("Temperature (°C)").unwrap();
+
+        // Draw axis value labels
+        for i in 0..=10 {
+            // Y-axis values (0-100%)
+            let y_val = 100 - i * 10;
+            let y = margin_top + (chart_height * i as f64 / 10.0);
+            let s = format!("{}%", y_val);
+            cr.move_to(margin_left - 30.0, y + 4.0);
+            cr.show_text(&s).unwrap();
+
+            // X-axis values (0-100°C)
+            let x_val = i * 10;
+            let x = margin_left + (chart_width * i as f64 / 10.0);
+            let s = format!("{}°", x_val);
+            cr.move_to(x - 10.0, h - margin_bottom + 20.0);
+            cr.show_text(&s).unwrap();
+        }
 
         // Draw curve if we have points
         if curve.points.len() >= 2 {

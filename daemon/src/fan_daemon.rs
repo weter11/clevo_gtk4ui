@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::time;
 use tuxedo_common::types::{FanCurve, FanSettings};
@@ -10,6 +11,7 @@ pub struct FanCurveManager {
     settings: Option<FanSettings>,
     last_update: Instant,
     update_interval: Duration,
+    last_speeds: HashMap<u32, u8>,
 }
 
 impl FanCurveManager {
@@ -25,6 +27,7 @@ impl FanCurveManager {
             settings: None,
             last_update: Instant::now(),
             update_interval: Duration::from_secs(2),
+            last_speeds: HashMap::new(),
         })
     }
     
@@ -65,12 +68,16 @@ impl FanCurveManager {
             
             // Calculate speed from curve
             let speed = self.interpolate_fan_speed(&curve.points, temp);
-            
-            // Apply speed
-            if let Err(e) = io.set_fan_speed(curve.fan_id, speed as u32) {
-                log::error!("Failed to set fan {} speed: {}", curve.fan_id, e);
-            } else {
-                log::debug!("Fan {}: temp={}°C, speed={}%", curve.fan_id, temp, speed);
+
+            // Only apply if speed has changed
+            let last_speed = self.last_speeds.get(&curve.fan_id).cloned().unwrap_or(0);
+            if speed != last_speed {
+                if let Err(e) = io.set_fan_speed(curve.fan_id, speed as u32) {
+                    log::error!("Failed to set fan {} speed: {}", curve.fan_id, e);
+                } else {
+                    self.last_speeds.insert(curve.fan_id, speed);
+                    log::debug!("Fan {}: temp={}°C, new speed={}% (was {}%)", curve.fan_id, temp, speed, last_speed);
+                }
             }
         }
         
