@@ -31,6 +31,8 @@ impl TuxedoWindow {
         
         // Create view stack and switcher
         let view_stack = adw::ViewStack::new();
+             view_stack.set_vexpand(true);
+             view_stack.set_hexpand(true);
         let view_switcher = adw::ViewSwitcher::builder()
             .stack(&view_stack)
             .policy(adw::ViewSwitcherPolicy::Wide)
@@ -40,9 +42,10 @@ impl TuxedoWindow {
         
         // Create pages
         let statistics = statistics_page::create_page(config.clone(), dbus_client.clone());
-        let profiles = profiles_page::create_page(config.clone(), dbus_client.clone());
+        let gtk_window = window.clone().upcast::<gtk::Window>();
+        let profiles = profiles_page::create_page(config.clone(), dbus_client.clone(), gtk_window.clone());
         let tuning = tuning_page::create_page(config.clone(), dbus_client.clone());
-        let settings = settings_page::create_page(config.clone());
+        let settings = settings_page::create_page(config.clone(), dbus_client.clone());
         
         view_stack.add_titled(&statistics, Some("statistics"), "Statistics");
         view_stack.add_titled(&profiles, Some("profiles"), "Profiles");
@@ -56,10 +59,11 @@ impl TuxedoWindow {
         
         window.set_content(Some(&main_box));
         
-        // Handle close button
-        window.connect_close_request(|window| {
-            window.set_visible(false);
-            gtk::glib::Propagation::Stop
+        // Handle close button - clean exit
+        window.connect_close_request(|_window| {
+            // The daemon will continue running independently
+            // GUI closes cleanly
+            gtk::glib::Propagation::Proceed  // Allow window to close
         });
         
         Self { window }

@@ -27,6 +27,24 @@ pub struct CpuInfo {
     pub max_freq: Option<u64>,
     pub hw_min_freq: u64,
     pub hw_max_freq: u64,
+    pub energy_performance_preference: Option<String>,  // ADD
+    pub available_epp_options: Vec<String>,             // ADD
+    pub capabilities: CpuCapabilities,                   // ADD
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CpuCapabilities {
+    pub has_boost: bool,
+    pub has_cpuinfo_max_freq: bool,
+    pub has_cpuinfo_min_freq: bool,
+    pub has_scaling_driver: bool,
+    pub has_energy_performance_preference: bool,
+    pub has_scaling_governor: bool,
+    pub has_smt: bool,
+    pub has_scaling_min_freq: bool,
+    pub has_scaling_max_freq: bool,
+    pub has_available_governors: bool,
+    pub has_amd_pstate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +97,8 @@ pub struct FanInfo {
     pub id: u32,
     pub name: String,
     pub rpm_or_percent: u32,
+    pub temperature: Option<f32>,  // Temperature sensor for this fan
+    pub is_rpm: bool,              // true if rpm_or_percent is RPM, false if it's percentage
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +106,11 @@ pub struct WiFiInfo {
     pub interface: String,
     pub driver: String,
     pub temperature: Option<f32>,
+    pub signal_level: Option<i32>,      // Signal level in dBm
+    pub channel: Option<u32>,           // Current channel
+    pub channel_width: Option<u32>,     // Channel width in MHz (20/40/80/160)
+    pub tx_rate: Option<f64>,           // Upload rate in Mbps
+    pub rx_rate: Option<f64>,           // Download rate in Mbps
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +141,8 @@ pub struct CpuSettings {
     pub boost: Option<bool>,
     pub smt: Option<bool>,
     pub performance_profile: Option<String>,
+    pub tdp_profile: Option<String>,              // ADD
+    pub energy_performance_preference: Option<String>,  // ADD
     pub tdp: Option<u32>,
     pub amd_pstate_status: Option<String>,
 }
@@ -133,8 +160,14 @@ pub struct KeyboardSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum KeyboardMode {
-    SingleColor { r: u8, g: u8, b: u8, brightness: u8 },
-    Effect { effect: String, speed: u8 },
+    SingleColor { r: u8, g: u8, b: u8, brightness: u8 },  // CUSTOM (0) - Static color
+    Breathe { r: u8, g: u8, b: u8, brightness: u8, speed: u8 },  // BREATHE (1)
+    Cycle { brightness: u8, speed: u8 },  // CYCLE (2) - Color cycle through spectrum
+    Dance { brightness: u8, speed: u8 },  // DANCE (3)
+    Flash { r: u8, g: u8, b: u8, brightness: u8, speed: u8 },  // FLASH (4)
+    RandomColor { brightness: u8, speed: u8 },  // RANDOM_COLOR (5)
+    Tempo { brightness: u8, speed: u8 },  // TEMPO (6)
+    Wave { brightness: u8, speed: u8 },  // WAVE (7)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +201,7 @@ pub struct AppConfig {
     pub autostart: bool,
     pub fan_daemon_enabled: bool,
     pub app_monitoring_enabled: bool,
+    pub auto_profile_switching: bool,  // Automatic profile switching based on running applications
     pub cpu_scheduler: String,
     pub statistics_sections: StatisticsSections,
     pub tuning_section_order: Vec<String>,
@@ -192,6 +226,14 @@ pub struct StatisticsSections {
     pub show_storage: bool,
     pub show_fans: bool,
     pub section_order: Vec<String>,
+    // Polling rates in milliseconds
+    pub system_info_poll_rate: u64,
+    pub cpu_poll_rate: u64,
+    pub gpu_poll_rate: u64,
+    pub battery_poll_rate: u64,
+    pub wifi_poll_rate: u64,
+    pub storage_poll_rate: u64,
+    pub fans_poll_rate: u64,
 }
 
 impl Default for AppConfig {
@@ -202,6 +244,7 @@ impl Default for AppConfig {
             autostart: false,
             fan_daemon_enabled: true,
             app_monitoring_enabled: true,
+            auto_profile_switching: false,  // Default: disabled
             cpu_scheduler: "CFS".to_string(),
             statistics_sections: StatisticsSections::default(),
             tuning_section_order: vec![
@@ -236,6 +279,13 @@ impl Default for StatisticsSections {
                 "Storage".to_string(),
                 "Fans".to_string(),
             ],
+            system_info_poll_rate: 60000,  // 60 seconds - rarely changes
+            cpu_poll_rate: 1000,            // 1 second
+            gpu_poll_rate: 2000,            // 2 seconds
+            battery_poll_rate: 5000,        // 5 seconds
+            wifi_poll_rate: 5000,           // 5 seconds
+            storage_poll_rate: 30000,       // 30 seconds
+            fans_poll_rate: 1000,           // 1 second
         }
     }
 }
@@ -266,6 +316,8 @@ impl Default for CpuSettings {
             performance_profile: None,
             tdp: None,
             amd_pstate_status: None,
+            tdp_profile: None,                          // ADD
+            energy_performance_preference: None,        // ADD
         }
     }
 }
