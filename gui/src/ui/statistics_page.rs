@@ -52,11 +52,11 @@ pub fn create_page(
     }
     
     if config.borrow().data.statistics_sections.show_battery {
-        let (group, refs) = create_battery_section();
+        let (group, refs) = create_battery_section(dbus_client.clone());
         main_box.append(&group);
         
         let poll_rate = config.borrow().data.statistics_sections.battery_poll_rate;
-        start_background_poll_battery(refs, poll_rate);
+        start_background_poll_battery(refs, dbus_client.clone(), poll_rate);
     }
     
     if config.borrow().data.statistics_sections.show_wifi {
@@ -139,11 +139,19 @@ fn start_background_poll_system(
 // Background polling for battery info
 fn start_background_poll_battery(
     refs: WidgetRefs,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
     poll_rate_ms: u64,
 ) {
     // Battery info is read from sysfs directly in the UI process, no DBus needed
+    // But we also check battery charge control status via DBus
+    let refs_clone = refs.clone();
+    let dbus_clone = dbus_client.clone();
+    
+    // Initial update
+    update_battery_info(&refs, &dbus_client);
+    
     glib::timeout_add_seconds_local((poll_rate_ms / 1000).max(1) as u32, move || {
-        update_battery_info(&refs);
+        update_battery_info(&refs_clone, &dbus_clone);
         glib::ControlFlow::Continue
     });
 }
@@ -174,7 +182,6 @@ fn start_background_poll_fans(
 
 fn update_fans_info_with_data(refs: &WidgetRefs, fans: Vec<tuxedo_common::types::FanInfo>) {
     // Hide all rows first
-    type WidgetRefs = Vec<(String, adw::ActionRow)>;
     for (_, row) in refs {
         row.set_visible(false);
     }
@@ -361,97 +368,7 @@ fn create_cpu_section() -> (adw::PreferencesGroup, WidgetRefs) {
 fn update_cpu_info(refs: &WidgetRefs, dbus_client: Rc<RefCell<Option<DbusClient>>>) {
     if let Some(client) = dbus_client.borrow().as_ref() {
         if let Ok(info) = client.get_cpu_info() {
-            let caps = &info.capabilities;
-
-            for (key, row) in refs {
-                match key.as_str() {
-                    "name" => {
-                        row.set_subtitle(&info.name);
-                        row.set_visible(true);
-                    }
-                    "freq" => {
-                        row.set_subtitle(&format!("{} MHz", info.median_frequency / 1000));
-                        row.set_visible(true);
-                    }
-                    "load" => {
-                        row.set_subtitle(&format!("{:.1}%", info.median_load));
-                        row.set_visible(true);
-                    }
-                    "temp" => {
-                        row.set_subtitle(&format!("{:.1}°C", info.package_temp));
-                        row.set_visible(true);
-                    }
-                    "power" => {
-                        if let Some(pwr) = info.package_power {
-                            if let Some(ref src) = info.power_source {
-                                row.set_subtitle(&format!("{:.1} W ({})", pwr, src));
-                            } else {
-                                row.set_subtitle(&format!("{:.1} W", pwr));
-                            }
-                            row.set_visible(true);
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "scaling_driver" => {
-                        if caps.has_scaling_driver && info.scaling_driver != "not_available" {
-                            row.set_subtitle(&info.scaling_driver);
-                            row.set_visible(true);
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "governor" => {
-                        if caps.has_scaling_governor && info.governor != "not_available" {
-                            row.set_subtitle(&info.governor);
-                            row.set_visible(true);
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "epp" => {
-                        if caps.has_energy_performance_preference {
-                            if let Some(ref epp) = info.energy_performance_preference {
-                                row.set_subtitle(epp);
-                                row.set_visible(true);
-                            } else {
-                                row.set_visible(false);
-                            }
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "boost" => {
-                        if caps.has_boost {
-                            row.set_subtitle(if info.boost_enabled { "Enabled" } else { "Disabled" });
-                            row.set_visible(true);
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "smt" => {
-                        if caps.has_smt {
-                            row.set_subtitle(if info.smt_enabled { "Enabled" } else { "Disabled" });
-                            row.set_visible(true);
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    "amd_pstate" => {
-                        if caps.has_amd_pstate {
-                            if let Some(ref status) = info.amd_pstate_status {
-                                row.set_subtitle(&format!("{} mode", status));
-                                row.set_visible(true);
-                            } else {
-                                row.set_visible(false);
-                            }
-                        } else {
-                            row.set_visible(false);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            update_cpu_info_with_data(refs, info);
         }
     }
 }
@@ -645,7 +562,7 @@ fn detect_gpu_info(path: &str, id: u32) -> Option<SimpleGpuInfo> {
     })
 }
 
-fn create_battery_section() -> (adw::PreferencesGroup, WidgetRefs) {
+fn create_battery_section(dbus_client: Rc<RefCell<Option<DbusClient>>>) -> (adw::PreferencesGroup, WidgetRefs) {
     let group = adw::PreferencesGroup::builder()
         .title("Battery")
         .build();
@@ -680,18 +597,67 @@ fn create_battery_section() -> (adw::PreferencesGroup, WidgetRefs) {
         .build();
     group.add(&power_row);
     
+    // Add battery charge control info
+    let charge_type_row = adw::ActionRow::builder()
+        .title("Charge Type")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_type_row);
+    
+    let charge_start_row = adw::ActionRow::builder()
+        .title("Charge Start Threshold")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_start_row);
+    
+    let charge_end_row = adw::ActionRow::builder()
+        .title("Charge End Threshold")
+        .subtitle("Loading...")
+        .visible(false)
+        .build();
+    group.add(&charge_end_row);
+    
+    // Load battery charge control info if available
+    if let Some(client) = dbus_client.borrow().as_ref() {
+        if let Ok(charge_type) = client.get_battery_charge_type() {
+            let display_type = match charge_type.as_str() {
+                "standard" => "Standard",
+                "express" => "Express",
+                "primarily_ac" => "Primarily AC",
+                _ => &charge_type,
+            };
+            charge_type_row.set_subtitle(display_type);
+            charge_type_row.set_visible(true);
+        }
+        
+        if let Ok(start_threshold) = client.get_battery_charge_start_threshold() {
+            charge_start_row.set_subtitle(&format!("{}%", start_threshold));
+            charge_start_row.set_visible(true);
+        }
+        
+        if let Ok(end_threshold) = client.get_battery_charge_end_threshold() {
+            charge_end_row.set_subtitle(&format!("{}%", end_threshold));
+            charge_end_row.set_visible(true);
+        }
+    }
+    
     let refs = vec![
         ("status".to_string(), status_row),
         ("capacity".to_string(), capacity_row),
         ("voltage".to_string(), voltage_row),
         ("current".to_string(), current_row),
         ("power".to_string(), power_row),
+        ("charge_type".to_string(), charge_type_row),
+        ("charge_start".to_string(), charge_start_row),
+        ("charge_end".to_string(), charge_end_row),
     ];
     
     (group, refs)
 }
 
-fn update_battery_info(refs: &WidgetRefs) {
+fn update_battery_info(refs: &WidgetRefs, dbus_client: &Rc<RefCell<Option<DbusClient>>>) {
     let battery_path = if std::path::Path::new("/sys/class/power_supply/BAT0").exists() {
         "/sys/class/power_supply/BAT0"
     } else if std::path::Path::new("/sys/class/power_supply/BAT1").exists() {
@@ -746,6 +712,48 @@ fn update_battery_info(refs: &WidgetRefs) {
                             row.set_subtitle(&format!("{:.2} W", p / 1_000_000.0));
                         }
                     }
+                }
+            }
+            "charge_type" => {
+                if let Some(client) = dbus_client.borrow().as_ref() {
+                    if let Ok(charge_type) = client.get_battery_charge_type() {
+                        let display_type = match charge_type.as_str() {
+                            "standard" => "Standard",
+                            "express" => "Express",
+                            "primarily_ac" => "Primarily AC",
+                            _ => &charge_type,
+                        };
+                        row.set_subtitle(display_type);
+                        row.set_visible(true);
+                    } else {
+                        row.set_visible(false);
+                    }
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "charge_start" => {
+                if let Some(client) = dbus_client.borrow().as_ref() {
+                    if let Ok(threshold) = client.get_battery_charge_start_threshold() {
+                        row.set_subtitle(&format!("{}%", threshold));
+                        row.set_visible(true);
+                    } else {
+                        row.set_visible(false);
+                    }
+                } else {
+                    row.set_visible(false);
+                }
+            }
+            "charge_end" => {
+                if let Some(client) = dbus_client.borrow().as_ref() {
+                    if let Ok(threshold) = client.get_battery_charge_end_threshold() {
+                        row.set_subtitle(&format!("{}%", threshold));
+                        row.set_visible(true);
+                    } else {
+                        row.set_visible(false);
+                    }
+                } else {
+                    row.set_visible(false);
                 }
             }
             _ => {}
