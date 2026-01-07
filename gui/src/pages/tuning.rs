@@ -98,7 +98,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "auto".to_string());
             
-            ComboBox::from_id_source("governor_combo")
+            ComboBox::new("governor_combo")
                 .selected_text(&current_gov)
                 .show_ui(ui, |ui| {
                     for gov in &cpu_info.available_governors {
@@ -120,7 +120,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "balance_performance".to_string());
             
-            ComboBox::from_id_source("epp_combo")
+            ComboBox::new("epp_combo")
                 .selected_text(&current_epp)
                 .show_ui(ui, |ui| {
                     for epp in &cpu_info.available_epp_options {
@@ -205,7 +205,7 @@ fn draw_keyboard_tuning(
                 KeyboardMode::Wave { .. } => "Wave",
             };
             
-            ComboBox::from_id_source("keyboard_mode")
+            ComboBox::new("keyboard_mode")
                 .selected_text(current_mode_name)
                 .show_ui(ui, |ui| {
                     for (name, _) in [

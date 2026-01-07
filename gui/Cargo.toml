@@ -8,7 +8,7 @@ license.workspace = true
 # Core egui
 eframe = "0.29"
 egui = "0.29"
-egui_extras = { version = "0.29", features = ["all_plots"] }
+egui_extras = { version = "0.29" }
 
 # Your existing dependencies
 tuxedo-common = { path = "../common" }
@@ -24,6 +24,7 @@ zbus = "4.0"
 
 # Time handling
 chrono = "0.4"
+tray-icon = "0.18"
 
 [profile.release]
 opt-level = 3
