@@ -1,4 +1,4 @@
-use egui::{Context, CentralPanel, TopBottomPanel};
+use egui::{Context, CentralPanel, TopBottomPanel, ViewportCommand};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tuxedo_common::types::*;
@@ -38,6 +38,12 @@ pub struct AppState {
     
     // Profile editing
     pub editing_profile_name: Option<String>,
+
+    // DBus client
+    #[serde(skip)]
+    pub dbus_client: Option<DbusClient>,
+    #[serde(skip)]
+    pub pending_battery_update: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +91,8 @@ impl AppState {
             status_message: None,
             last_poll: PollTimers::default(),
             editing_profile_name: None,
+            dbus_client: None,
+            pending_battery_update: None,
         }
     }
     
@@ -123,7 +131,6 @@ impl AppState {
 
 pub struct TuxedoApp {
     state: AppState,
-    dbus_client: Option<DbusClient>,
     theme: TuxedoTheme,
     
     // Background update channel
@@ -163,10 +170,11 @@ impl TuxedoApp {
                 None
             }
         };
+        state.dbus_client = dbus_client;
         
         // Setup background polling
         let (hw_update_tx, hw_update_rx) = mpsc::unbounded_channel();
-        if let Some(ref client) = dbus_client {
+        if let Some(ref client) = state.dbus_client {
             start_background_polling(client.clone(), hw_update_tx);
         }
         
@@ -176,9 +184,9 @@ impl TuxedoApp {
         
         Self {
             state,
-            dbus_client,
             theme,
             hw_update_rx,
+            shortcuts: KeyboardShortcuts::new(),
         }
     }
     
@@ -279,13 +287,13 @@ impl eframe::App for TuxedoApp {
                     statistics::draw(ui, &mut self.state);
                 }
                 Page::Profiles => {
-                    profiles::draw(ui, &mut self.state, self.dbus_client.as_ref());
+                    profiles::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
                 }
                 Page::Tuning => {
-                    tuning::draw(ui, &mut self.state, self.dbus_client.as_ref());
+                    tuning::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
                 }
                 Page::Settings => {
-                    settings::draw(ui, &mut self.state);
+                    settings::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
                 }
             }
         });
