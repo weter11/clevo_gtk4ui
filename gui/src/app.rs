@@ -25,6 +25,7 @@ pub struct AppState {
     pub gpu_info: Vec<GpuInfo>,
     pub battery_info: Option<BatteryInfo>,
     pub wifi_info: Vec<WiFiInfo>,
+    pub storage_info: Vec<StorageInfo>,
     pub fan_info: Vec<FanInfo>,
     
     // UI state
@@ -137,6 +138,7 @@ pub enum HardwareUpdate {
     GpuInfo(Vec<GpuInfo>),
     BatteryInfo(BatteryInfo),
     WifiInfo(Vec<WiFiInfo>),
+    StorageInfo(Vec<StorageInfo>),
     FanInfo(Vec<FanInfo>),
     Error(String),
 }
@@ -199,6 +201,9 @@ impl TuxedoApp {
                 HardwareUpdate::WifiInfo(info) => {
                     self.state.wifi_info = info;
                 }
+                HardwareUpdate::StorageInfo(info) => {
+    self.state.storage_info = info;
+}
                 HardwareUpdate::FanInfo(info) => {
                     self.state.fan_info = info;
                 }
@@ -435,6 +440,84 @@ fn save_config_to_disk(config: &AppConfig) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(config)?;
     std::fs::write(config_path, json)?;
     Ok(())
+}
+
+fn read_storage_info() -> Result<Vec<StorageInfo>> {
+    use std::fs;
+    let mut storage_devices = Vec::new();
+    
+    for entry in fs::read_dir("/sys/block")? {
+        let entry = entry?;
+        let dev_name = entry.file_name().to_string_lossy().to_string();
+        
+        // Skip loop devices and ram
+        if dev_name.starts_with("loop") || dev_name.starts_with("ram") {
+            continue;
+        }
+        
+        let path = entry.path();
+        
+        // Read model
+        let model = fs::read_to_string(path.join("device/model"))
+            .unwrap_or_else(|_| dev_name.clone())
+            .trim()
+            .to_string();
+        
+        // Read size (in 512-byte sectors)
+        let size_gb = if let Ok(size_str) = fs::read_to_string(path.join("size")) {
+            if let Ok(sectors) = size_str.trim().parse::<u64>() {
+                (sectors * 512) / 1_000_000_000
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        
+        // Try to read temperature from hwmon
+        let temperature = find_storage_temp(&dev_name);
+        
+        storage_devices.push(StorageInfo {
+            device: format!("/dev/{}", dev_name),
+            model,
+            size_gb,
+            temperature,
+        });
+    }
+    
+    Ok(storage_devices)
+}
+
+fn find_storage_temp(device: &str) -> Option<f32> {
+    use std::fs;
+    
+    // Try hwmon for this device
+    let hwmon_path = format!("/sys/block/{}/device/hwmon", device);
+    if let Ok(entries) = fs::read_dir(&hwmon_path) {
+        for entry in entries.flatten() {
+            let temp_path = entry.path().join("temp1_input");
+            if let Ok(temp_str) = fs::read_to_string(&temp_path) {
+                if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
+                    return Some(temp_millideg as f32 / 1000.0);
+                }
+            }
+        }
+    }
+    
+    // Try drivetemp module
+    let drivetemp_path = format!("/sys/class/scsi_disk/0:0:0:0/device/hwmon");
+    if let Ok(entries) = fs::read_dir(&drivetemp_path) {
+        for entry in entries.flatten() {
+            let temp_path = entry.path().join("temp1_input");
+            if let Ok(temp_str) = fs::read_to_string(&temp_path) {
+                if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
+                    return Some(temp_millideg as f32 / 1000.0);
+                }
+            }
+        }
+    }
+    
+    None
 }
 
 fn read_battery_info() -> anyhow::Result<BatteryInfo> {
