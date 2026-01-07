@@ -1,18 +1,29 @@
-mod config;
+mod app;
 mod dbus_client;
-mod egui_ui;
+mod theme;
+mod pages;
 
-use eframe::NativeOptions;
-use egui_ui::app::TuxedoControlCenterApp;
+use app::TuxedoApp;
 
-fn main() -> eframe::Result<()> {
-    // Initialize logging
+fn main() -> Result<(), eframe::Error> {
     env_logger::init();
-
-    // Run the egui application
+    
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1100.0, 750.0])
+            .with_min_inner_size([900.0, 600.0])
+            .with_icon(load_icon()),
+        ..Default::default()
+    };
+    
     eframe::run_native(
         "TUXEDO Control Center",
-        NativeOptions::default(),
-        Box::new(|_cc| Ok(Box::new(TuxedoControlCenterApp::new()))),
+        options,
+        Box::new(|cc| Ok(Box::new(TuxedoApp::new(cc)))),
     )
+}
+
+fn load_icon() -> egui::IconData {
+    // Load your icon here or return default
+    egui::IconData::default()
 }
