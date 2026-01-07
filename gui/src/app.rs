@@ -295,39 +295,123 @@ fn start_background_polling(
         let mut interval = tokio::time::interval(Duration::from_millis(1000));
         let mut tick_count = 0u64;
         
+        // Keep pending requests to check if they completed
+        let mut pending_cpu: Option<oneshot::Receiver<Result<CpuInfo>>> = None;
+        let mut pending_fans: Option<oneshot::Receiver<Result<Vec<FanInfo>>>> = None;
+        let mut pending_battery: Option<oneshot::Receiver<Result<BatteryInfo>>> = None;
+        let mut pending_system: Option<oneshot::Receiver<Result<SystemInfo>>> = None;
+        let mut pending_gpu: Option<oneshot::Receiver<Result<Vec<GpuInfo>>>> = None;
+        
         loop {
             interval.tick().await;
             tick_count += 1;
             
-            // CPU info every second
-            if let Ok(info) = client.get_cpu_info() {
-                let _ = tx.send(HardwareUpdate::CpuInfo(info));
+            // Check completed CPU request
+            if let Some(mut rx) = pending_cpu.take() {
+                match rx.try_recv() {
+                    Ok(Ok(info)) => {
+                        let _ = tx.send(HardwareUpdate::CpuInfo(info));
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("CPU info error: {}", e);
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        // Still waiting, keep it
+                        pending_cpu = Some(rx);
+                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        log::error!("CPU info channel closed");
+                    }
+                }
             }
             
-            // Fan info every second
-            if let Ok(info) = client.get_fan_info() {
-                let _ = tx.send(HardwareUpdate::FanInfo(info));
+            // Start new CPU request if not pending
+            if pending_cpu.is_none() {
+                pending_cpu = Some(client.get_cpu_info());
+            }
+            
+            // Check completed fan request
+            if let Some(mut rx) = pending_fans.take() {
+                match rx.try_recv() {
+                    Ok(Ok(info)) => {
+                        let _ = tx.send(HardwareUpdate::FanInfo(info));
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("Fan info error: {}", e);
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        pending_fans = Some(rx);
+                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        log::error!("Fan info channel closed");
+                    }
+                }
+            }
+            
+            if pending_fans.is_none() {
+                pending_fans = Some(client.get_fan_info());
             }
             
             // Battery every 5 seconds
             if tick_count % 5 == 0 {
-                // Read battery from sysfs directly (faster than DBus)
-                if let Ok(info) = read_battery_info() {
-                    let _ = tx.send(HardwareUpdate::BatteryInfo(info));
+                if let Some(mut rx) = pending_battery.take() {
+                    match rx.try_recv() {
+                        Ok(Ok(info)) => {
+                            let _ = tx.send(HardwareUpdate::BatteryInfo(info));
+                        }
+                        Ok(Err(_)) => {}
+                        Err(oneshot::error::TryRecvError::Empty) => {
+                            pending_battery = Some(rx);
+                        }
+                        Err(oneshot::error::TryRecvError::Closed) => {}
+                    }
+                }
+                
+                if pending_battery.is_none() {
+                    // Read battery from sysfs directly (faster)
+                    if let Ok(info) = read_battery_info() {
+                        let _ = tx.send(HardwareUpdate::BatteryInfo(info));
+                    }
                 }
             }
             
             // System info every 60 seconds
             if tick_count % 60 == 0 {
-                if let Ok(info) = client.get_system_info() {
-                    let _ = tx.send(HardwareUpdate::SystemInfo(info));
+                if let Some(mut rx) = pending_system.take() {
+                    match rx.try_recv() {
+                        Ok(Ok(info)) => {
+                            let _ = tx.send(HardwareUpdate::SystemInfo(info));
+                        }
+                        Ok(Err(_)) => {}
+                        Err(oneshot::error::TryRecvError::Empty) => {
+                            pending_system = Some(rx);
+                        }
+                        Err(oneshot::error::TryRecvError::Closed) => {}
+                    }
+                }
+                
+                if pending_system.is_none() {
+                    pending_system = Some(client.get_system_info());
                 }
             }
             
             // GPU every 2 seconds
             if tick_count % 2 == 0 {
-                if let Ok(info) = client.get_gpu_info() {
-                    let _ = tx.send(HardwareUpdate::GpuInfo(info));
+                if let Some(mut rx) = pending_gpu.take() {
+                    match rx.try_recv() {
+                        Ok(Ok(info)) => {
+                            let _ = tx.send(HardwareUpdate::GpuInfo(info));
+                        }
+                        Ok(Err(_)) => {}
+                        Err(oneshot::error::TryRecvError::Empty) => {
+                            pending_gpu = Some(rx);
+                        }
+                        Err(oneshot::error::TryRecvError::Closed) => {}
+                    }
+                }
+                
+                if pending_gpu.is_none() {
+                    pending_gpu = Some(client.get_gpu_info());
                 }
             }
         }
