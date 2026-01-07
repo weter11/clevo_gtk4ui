@@ -209,7 +209,7 @@ pub struct AppConfig {
     pub current_profile: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Theme {
     Auto,
     Light,
