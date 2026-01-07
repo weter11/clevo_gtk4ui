@@ -27,6 +27,17 @@ pub fn draw(ui: &mut Ui, state: &mut AppState) {
                 draw_battery_info(ui, state);
                 ui.add_space(12.0);
             }
+
+            if state.config.statistics_sections.show_wifi {
+    draw_wifi_info(ui, state);
+    ui.add_space(12.0);
+}
+
+if state.config.statistics_sections.show_storage {
+    draw_storage_info(ui, state);
+    ui.add_space(12.0);
+}
+
             
             if state.config.statistics_sections.show_fans {
                 draw_fan_info(ui, state);
@@ -361,6 +372,98 @@ fn draw_battery_info(ui: &mut Ui, state: &AppState) {
                     });
             } else {
                 ui.label("No battery detected");
+            }
+        });
+}
+
+fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
+    CollapsingHeader::new(RichText::new("📶 WiFi").heading())
+        .default_open(true)
+        .show(ui, |ui| {
+            if !state.wifi_info.is_empty() {
+                for wifi in &state.wifi_info {
+                    ui.label(RichText::new(format!("Interface: {}", wifi.interface)).strong());
+                    
+                    Grid::new(format!("wifi_grid_{}", wifi.interface))
+                        .num_columns(2)
+                        .spacing([40.0, 6.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label("Driver:");
+                            ui.label(&wifi.driver);
+                            ui.end_row();
+                            
+                            // Signal strength with visual indicator
+                            if let Some(signal) = wifi.signal_level {
+                                ui.label("Signal Level:");
+                                ui.horizontal(|ui| {
+                                    // Convert dBm to percentage (rough approximation)
+                                    // -30 dBm = excellent, -90 dBm = unusable
+                                    let signal_percent = ((signal + 90) as f32 / 60.0).clamp(0.0, 1.0);
+                                    
+                                    let color = if signal_percent > 0.7 {
+                                        Color32::from_rgb(100, 200, 120)  // Good - green
+                                    } else if signal_percent > 0.4 {
+                                        Color32::from_rgb(255, 200, 60)   // Medium - yellow
+                                    } else {
+                                        Color32::from_rgb(255, 100, 80)   // Weak - red
+                                    };
+                                    
+                                    ui.add(
+                                        ProgressBar::new(signal_percent)
+                                            .text(format!("{} dBm", signal))
+                                            .fill(color)
+                                            .desired_width(150.0)
+                                    );
+                                });
+                                ui.end_row();
+                            }
+                            
+                            // Channel
+                            if let Some(channel) = wifi.channel {
+                                ui.label("Channel:");
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("{}", channel));
+                                    
+                                    if let Some(width) = wifi.channel_width {
+                                        ui.label(RichText::new(format!("({} MHz)", width))
+                                            .small()
+                                            .italics());
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                            
+                            // Transfer rates
+                            if let Some(tx_rate) = wifi.tx_rate {
+                                ui.label("TX Rate:");
+                                ui.label(RichText::new(format!("{:.1} Mbps", tx_rate))
+                                    .monospace());
+                                ui.end_row();
+                            }
+                            
+                            if let Some(rx_rate) = wifi.rx_rate {
+                                ui.label("RX Rate:");
+                                ui.label(RichText::new(format!("{:.1} Mbps", rx_rate))
+                                    .monospace());
+                                ui.end_row();
+                            }
+                            
+                            // Temperature if available
+                            if let Some(temp) = wifi.temperature {
+                                ui.label("Temperature:");
+                                ui.colored_label(
+                                    temp_color(temp),
+                                    format!("{:.1}°C", temp)
+                                );
+                                ui.end_row();
+                            }
+                        });
+                    
+                    ui.add_space(8.0);
+                }
+            } else {
+                ui.label("No WiFi interface detected");
             }
         });
 }
