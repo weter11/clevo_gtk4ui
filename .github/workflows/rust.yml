@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - new_variant
+      - qt6_exp
   pull_request:
     branches:
       - main
