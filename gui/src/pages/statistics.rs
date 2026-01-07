@@ -468,6 +468,49 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
         });
 }
 
+fn draw_storage_info(ui: &mut Ui, state: &AppState) {
+    CollapsingHeader::new(RichText::new("💾 Storage").heading())
+        .default_open(false)
+        .show(ui, |ui| {
+            if !state.storage_info.is_empty() {
+                Grid::new("storage_grid")
+                    .num_columns(2)
+                    .spacing([40.0, 8.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for storage in &state.storage_info {
+                            ui.label(RichText::new(&storage.model).strong());
+                            ui.label(format!("{} GB", storage.size_gb));
+                            ui.end_row();
+                            
+                            ui.label("Device:");
+                            ui.label(RichText::new(&storage.device).monospace());
+                            ui.end_row();
+                            
+                            if let Some(temp) = storage.temperature {
+                                ui.label("Temperature:");
+                                ui.colored_label(
+                                    temp_color(temp),
+                                    format!("{:.1}°C", temp)
+                                );
+                                ui.end_row();
+                            }
+                            
+                            ui.label("");
+                            ui.separator();
+                            ui.end_row();
+                        }
+                    });
+            } else {
+                ui.label("No storage devices detected");
+                ui.add_space(6.0);
+                ui.label(RichText::new("Reading from /sys/block...")
+                    .small()
+                    .italics());
+            }
+        });
+}
+
 fn draw_fan_info(ui: &mut Ui, state: &AppState) {
     CollapsingHeader::new(RichText::new("💨 Fans").heading())
         .default_open(true)
