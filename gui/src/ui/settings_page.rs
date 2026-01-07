@@ -6,8 +6,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::config::Config;
+use crate::dbus_client::DbusClient;
 
-pub fn create_page(config: Rc<RefCell<Config>>) -> ScrolledWindow {
+pub fn create_page(
+    config: Rc<RefCell<Config>>,
+    dbus_client: Rc<RefCell<Option<DbusClient>>>,
+) -> ScrolledWindow {
     let scrolled = ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
@@ -68,6 +72,122 @@ pub fn create_page(config: Rc<RefCell<Config>>) -> ScrolledWindow {
     
     appearance_group.add(&theme_row);
     main_box.append(&appearance_group);
+    
+    // Battery Charge Control Group
+    if dbus_client.borrow().is_some() {
+        let battery_group = adw::PreferencesGroup::builder()
+            .title("Battery Charge Control")
+            .description("Configure battery charging thresholds to extend battery lifespan")
+            .build();
+        
+        // Charge type
+        let charge_type_row = adw::ComboRow::builder()
+            .title("Charge Type")
+            .subtitle("Select charging behavior")
+            .build();
+        
+        let charge_types = vec!["Standard", "Express", "Primarily AC"];
+        let charge_types_values = vec!["standard", "express", "primarily_ac"];
+        let model = gtk::StringList::new(&charge_types);
+        charge_type_row.set_model(Some(&model));
+        
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Ok(current_type) = client.get_battery_charge_type() {
+                if let Some(idx) = charge_types_values.iter().position(|t| *t == current_type.as_str()) {
+                    charge_type_row.set_selected(idx as u32);
+                }
+            }
+        }
+        
+        let dbus_clone = dbus_client.clone();
+        charge_type_row.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            let types = vec!["standard", "express", "primarily_ac"];
+            if idx < types.len() {
+                if let Some(client) = dbus_clone.borrow().as_ref() {
+                    let _ = client.set_battery_charge_type(types[idx]);
+                }
+            }
+        });
+        
+        battery_group.add(&charge_type_row);
+        
+        // Start threshold
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Ok(available_starts) = client.get_battery_available_start_thresholds() {
+                if !available_starts.is_empty() {
+                    let start_row = adw::ActionRow::builder()
+                        .title("Charge Start Threshold")
+                        .subtitle("Battery will start charging when below this level")
+                        .build();
+                    
+                    let current_start = client.get_battery_charge_start_threshold().unwrap_or(0);
+                    
+                    let start_scale = Scale::with_range(
+                        gtk::Orientation::Horizontal,
+                        *available_starts.first().unwrap() as f64,
+                        *available_starts.last().unwrap() as f64,
+                        1.0,
+                    );
+                    start_scale.set_value(current_start as f64);
+                    start_scale.set_hexpand(true);
+                    start_scale.set_draw_value(true);
+                    start_scale.set_value_pos(gtk::PositionType::Right);
+                    start_scale.set_format_value_func(|_, val| format!("{}%", val as u8));
+                    
+                    let dbus_clone = dbus_client.clone();
+                    start_scale.connect_value_changed(move |scale| {
+                        let value = scale.value() as u8;
+                        if let Some(client) = dbus_clone.borrow().as_ref() {
+                            let _ = client.set_battery_charge_start_threshold(value);
+                        }
+                    });
+                    
+                    start_row.add_suffix(&start_scale);
+                    battery_group.add(&start_row);
+                }
+            }
+        }
+        
+        // End threshold
+        if let Some(client) = dbus_client.borrow().as_ref() {
+            if let Ok(available_ends) = client.get_battery_available_end_thresholds() {
+                if !available_ends.is_empty() {
+                    let end_row = adw::ActionRow::builder()
+                        .title("Charge End Threshold")
+                        .subtitle("Battery will stop charging when reaching this level")
+                        .build();
+                    
+                    let current_end = client.get_battery_charge_end_threshold().unwrap_or(100);
+                    
+                    let end_scale = Scale::with_range(
+                        gtk::Orientation::Horizontal,
+                        *available_ends.first().unwrap() as f64,
+                        *available_ends.last().unwrap() as f64,
+                        1.0,
+                    );
+                    end_scale.set_value(current_end as f64);
+                    end_scale.set_hexpand(true);
+                    end_scale.set_draw_value(true);
+                    end_scale.set_value_pos(gtk::PositionType::Right);
+                    end_scale.set_format_value_func(|_, val| format!("{}%", val as u8));
+                    
+                    let dbus_clone = dbus_client.clone();
+                    end_scale.connect_value_changed(move |scale| {
+                        let value = scale.value() as u8;
+                        if let Some(client) = dbus_clone.borrow().as_ref() {
+                            let _ = client.set_battery_charge_end_threshold(value);
+                        }
+                    });
+                    
+                    end_row.add_suffix(&end_scale);
+                    battery_group.add(&end_row);
+                }
+            }
+        }
+        
+        main_box.append(&battery_group);
+    }
     
     // Startup Group
     let startup_group = adw::PreferencesGroup::builder()
