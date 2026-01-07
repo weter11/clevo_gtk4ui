@@ -4,11 +4,11 @@ on:
   push:
     branches:
       - main
-      - qt6_exp
+      - egui_mod
   pull_request:
     branches:
       - main
-      - qt6_exp
+      - egui_mod
 
 env:
   CARGO_TERM_COLOR: always
