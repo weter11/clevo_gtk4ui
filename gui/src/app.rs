@@ -39,11 +39,6 @@ pub struct AppState {
     // Profile editing
     pub editing_profile_name: Option<String>,
 
-    // DBus client
-    #[serde(skip)]
-    pub dbus_client: Option<DbusClient>,
-    #[serde(skip)]
-    pub pending_battery_update: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,11 +126,13 @@ impl AppState {
 
 pub struct TuxedoApp {
     state: AppState,
+    dbus_client: Option<DbusClient>,
     theme: TuxedoTheme,
     
     // Background update channel
     hw_update_rx: mpsc::UnboundedReceiver<HardwareUpdate>,
     shortcuts: KeyboardShortcuts,
+    pending_battery_update: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
 }
 
 #[derive(Debug)]
@@ -184,9 +181,11 @@ impl TuxedoApp {
         
         Self {
             state,
+            dbus_client,
             theme,
             hw_update_rx,
             shortcuts: KeyboardShortcuts::new(),
+            pending_battery_update: None,
         }
     }
     
