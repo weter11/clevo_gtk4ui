@@ -316,7 +316,7 @@ fn draw_screen_tuning(ui: &mut Ui, profile: &mut tuxedo_common::types::Profile) 
     }
 }
 
-fn draw_fan_tuning(ui: &mut Ui, profile: &mut tuxedo_common::types::Profile) {
+fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &mut AppState) {
     ui.heading("💨 Fan Control");
     ui.add_space(8.0);
     
@@ -324,7 +324,35 @@ fn draw_fan_tuning(ui: &mut Ui, profile: &mut tuxedo_common::types::Profile) {
     ui.add_space(6.0);
     
     if profile.fan_settings.control_enabled {
-        ui.label(RichText::new("Fan curve editor coming soon...").italics());
-        ui.label("For now, use the GTK version to create fan curves.");
+        // Determine number of fans
+        let fan_count = state.fan_info.len().max(2);
+        
+        // Ensure we have curves for all fans
+        while profile.fan_settings.curves.len() < fan_count {
+            let fan_id = profile.fan_settings.curves.len() as u32;
+            profile.fan_settings.curves.push(FanCurve {
+                fan_id,
+                points: vec![(0, 0), (50, 50), (70, 75), (85, 100)],
+            });
+        }
+        
+        // Show editor for each fan
+        for curve in profile.fan_settings.curves.iter_mut() {
+            if curve.fan_id < fan_count as u32 {
+                ui.separator();
+                ui.add_space(8.0);
+                
+                egui::CollapsingHeader::new(format!("Fan {} Configuration", curve.fan_id))
+                    .default_open(curve.fan_id == 0)
+                    .show(ui, |ui| {
+                        // Create editor
+                        let mut editor = FanCurveEditor::new(curve.fan_id, curve.clone());
+                        editor.show(ui);
+                        
+                        // Update curve from editor
+                        *curve = editor.get_curve();
+                    });
+            }
+        }
     }
 }
