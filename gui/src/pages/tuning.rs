@@ -1,8 +1,8 @@
-use egui::{Ui, ScrollArea, RichText, Slider, ComboBox, DragValue};
+use egui::{Ui, ScrollArea, RichText, Slider, ComboBox};
 use crate::app::AppState;
 use crate::dbus_client::DbusClient;
-use tuxedo_common::types::KeyboardMode;
-use tuxedo_common::types::Profile;
+use tuxedo_common::types::{KeyboardMode, Profile, FanCurve};  // ADD FanCurve
+use crate::widgets::fan_curve_editor::FanCurveEditor;  // ADD this
 
 pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>) {
     ScrollArea::vertical()
@@ -18,43 +18,40 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 ui.heading(format!("Editing Profile: {}", profile_name));
                 ui.add_space(16.0);
                 
-                // Get CPU capabilities from state
                 let cpu_caps = state.cpu_info.as_ref().map(|c| &c.capabilities);
                 
-                // CPU Tuning Section
+                // CPU tuning
                 draw_cpu_tuning(ui, &mut state.config.profiles[idx], state, cpu_caps);
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(16.0);
                 
-                // Keyboard Tuning Section
+                // Keyboard tuning
                 draw_keyboard_tuning(ui, &mut state.config.profiles[idx], dbus_client);
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(16.0);
                 
-                // Screen Tuning Section
+                // Screen tuning
                 draw_screen_tuning(ui, &mut state.config.profiles[idx]);
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(16.0);
                 
-                // Fan Tuning Section
-                draw_fan_tuning(ui, &mut state.config.profiles[idx]);
+                // Fan tuning
+                draw_fan_tuning(ui, &mut state.config.profiles[idx], state);
                 ui.add_space(16.0);
                 
-                // Apply buttons
+                // Action buttons
                 ui.horizontal(|ui| {
                     if ui.button("💾 Save & Apply Profile").clicked() {
                         state.config_dirty = false;
                         let _ = state.save_config();
                         
                         if let Some(client) = dbus_client {
-                            if let Err(e) = client.apply_profile(&state.config.profiles[idx]) {
-                                state.show_message(format!("Failed to apply: {}", e), true);
-                            } else {
-                                state.show_message("Profile saved and applied", false);
-                            }
+                            let profile_clone = state.config.profiles[idx].clone();
+                            let rx = client.apply_profile(profile_clone);
+                            // Result handled in background
                         }
                     }
                     
@@ -73,7 +70,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
 
 fn draw_cpu_tuning(
     ui: &mut Ui,
-    profile: &mut tuxedo_common::types::Profile,
+    profile: &mut Profile,
     state: &AppState,
     cpu_caps: Option<&tuxedo_common::types::CpuCapabilities>,
 ) {
@@ -99,7 +96,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "auto".to_string());
             
-            ComboBox::new("governor_combo")
+            ComboBox::from_id_source("governor_combo")
                 .selected_text(&current_gov)
                 .show_ui(ui, |ui| {
                     for gov in &cpu_info.available_governors {
@@ -121,7 +118,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "balance_performance".to_string());
             
-            ComboBox::new("epp_combo")
+            ComboBox::from_id_source("epp_combo")
                 .selected_text(&current_epp)
                 .show_ui(ui, |ui| {
                     for epp in &cpu_info.available_epp_options {
@@ -147,16 +144,14 @@ fn draw_cpu_tuning(
             ui.label("Min:");
             ui.add(Slider::new(&mut min_freq, 
                 (cpu_info.hw_min_freq / 1000) as f64..=(cpu_info.hw_max_freq / 1000) as f64)
-                .suffix(" MHz")
-                .step_by(100.0));
+                .suffix(" MHz"));
         });
         
         ui.horizontal(|ui| {
             ui.label("Max:");
             ui.add(Slider::new(&mut max_freq,
                 (cpu_info.hw_min_freq / 1000) as f64..=(cpu_info.hw_max_freq / 1000) as f64)
-                .suffix(" MHz")
-                .step_by(100.0));
+                .suffix(" MHz"));
         });
         
         profile.cpu_settings.min_frequency = Some((min_freq * 1000.0) as u64);
@@ -181,7 +176,7 @@ fn draw_cpu_tuning(
 
 fn draw_keyboard_tuning(
     ui: &mut Ui,
-    profile: &mut tuxedo_common::types::Profile,
+    profile: &mut Profile,
     dbus_client: Option<&DbusClient>,
 ) {
     ui.heading("⌨️ Keyboard Backlight");
@@ -199,31 +194,24 @@ fn draw_keyboard_tuning(
                 KeyboardMode::SingleColor { .. } => "Single Color",
                 KeyboardMode::Breathe { .. } => "Breathe",
                 KeyboardMode::Cycle { .. } => "Cycle",
-                KeyboardMode::Dance { .. } => "Dance",
-                KeyboardMode::Flash { .. } => "Flash",
-                KeyboardMode::RandomColor { .. } => "Random Color",
-                KeyboardMode::Tempo { .. } => "Tempo",
                 KeyboardMode::Wave { .. } => "Wave",
+                _ => "Other",
             };
             
-            ComboBox::new("keyboard_mode")
+            ComboBox::from_id_source("keyboard_mode")
                 .selected_text(current_mode_name)
                 .show_ui(ui, |ui| {
-                    for (name, _) in [
-                        ("Single Color", 0),
-                        ("Breathe", 1),
-                        ("Cycle", 2),
-                        ("Wave", 3),
-                    ] {
-                        if ui.selectable_label(current_mode_name == name, name).clicked() {
-                            profile.keyboard_settings.mode = match name {
-                                "Single Color" => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
-                                "Breathe" => KeyboardMode::Breathe { r: 255, g: 255, b: 255, brightness: 50, speed: 50 },
-                                "Cycle" => KeyboardMode::Cycle { brightness: 50, speed: 50 },
-                                "Wave" => KeyboardMode::Wave { brightness: 50, speed: 50 },
-                                _ => KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 },
-                            };
-                        }
+                    if ui.selectable_label(current_mode_name == "Single Color", "Single Color").clicked() {
+                        profile.keyboard_settings.mode = KeyboardMode::SingleColor { r: 255, g: 255, b: 255, brightness: 50 };
+                    }
+                    if ui.selectable_label(current_mode_name == "Breathe", "Breathe").clicked() {
+                        profile.keyboard_settings.mode = KeyboardMode::Breathe { r: 255, g: 255, b: 255, brightness: 50, speed: 50 };
+                    }
+                    if ui.selectable_label(current_mode_name == "Cycle", "Cycle").clicked() {
+                        profile.keyboard_settings.mode = KeyboardMode::Cycle { brightness: 50, speed: 50 };
+                    }
+                    if ui.selectable_label(current_mode_name == "Wave", "Wave").clicked() {
+                        profile.keyboard_settings.mode = KeyboardMode::Wave { brightness: 50, speed: 50 };
                     }
                 });
         });
@@ -256,53 +244,19 @@ fn draw_keyboard_tuning(
                     ui.colored_label(color, "■■■■■");
                 });
             }
-            KeyboardMode::Breathe { r, g, b, brightness, speed } |
-            KeyboardMode::Flash { r, g, b, brightness, speed } => {
-                ui.horizontal(|ui| {
-                    ui.label("Red:");
-                    ui.add(Slider::new(r, 0..=255));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Green:");
-                    ui.add(Slider::new(g, 0..=255));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Blue:");
-                    ui.add(Slider::new(b, 0..=255));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Brightness:");
-                    ui.add(Slider::new(brightness, 0..=100).suffix("%"));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Speed:");
-                    ui.add(Slider::new(speed, 0..=100).suffix("%"));
-                });
-            }
-            KeyboardMode::Cycle { brightness, speed } |
-            KeyboardMode::Wave { brightness, speed } => {
-                ui.horizontal(|ui| {
-                    ui.label("Brightness:");
-                    ui.add(Slider::new(brightness, 0..=100).suffix("%"));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Speed:");
-                    ui.add(Slider::new(speed, 0..=100).suffix("%"));
-                });
-            }
             _ => {}
         }
         
         // Preview button
         if ui.button("👁️ Preview").clicked() {
             if let Some(client) = dbus_client {
-                let _ = client.preview_keyboard_settings(&profile.keyboard_settings);
+                let _ = client.preview_keyboard_settings(profile.keyboard_settings.clone());
             }
         }
     }
 }
 
-fn draw_screen_tuning(ui: &mut Ui, profile: &mut tuxedo_common::types::Profile) {
+fn draw_screen_tuning(ui: &mut Ui, profile: &mut Profile) {
     ui.heading("🖥️ Screen");
     ui.add_space(8.0);
     
@@ -317,7 +271,7 @@ fn draw_screen_tuning(ui: &mut Ui, profile: &mut tuxedo_common::types::Profile) 
     }
 }
 
-fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &mut AppState) {
+fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &AppState) {
     ui.heading("💨 Fan Control");
     ui.add_space(8.0);
     
@@ -325,10 +279,9 @@ fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &mut AppState) {
     ui.add_space(6.0);
     
     if profile.fan_settings.control_enabled {
-        // Determine number of fans
         let fan_count = state.fan_info.len().max(2);
         
-        // Ensure we have curves for all fans
+        // Ensure curves exist
         while profile.fan_settings.curves.len() < fan_count {
             let fan_id = profile.fan_settings.curves.len() as u32;
             profile.fan_settings.curves.push(FanCurve {
@@ -339,18 +292,15 @@ fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &mut AppState) {
         
         // Show editor for each fan
         for curve in profile.fan_settings.curves.iter_mut() {
-            if curve.fan_id < fan_count as u32 {
+            if (curve.fan_id as usize) < fan_count {
                 ui.separator();
                 ui.add_space(8.0);
                 
                 egui::CollapsingHeader::new(format!("Fan {} Configuration", curve.fan_id))
                     .default_open(curve.fan_id == 0)
                     .show(ui, |ui| {
-                        // Create editor
                         let mut editor = FanCurveEditor::new(curve.fan_id, curve.clone());
                         editor.show(ui);
-                        
-                        // Update curve from editor
                         *curve = editor.get_curve();
                     });
             }
