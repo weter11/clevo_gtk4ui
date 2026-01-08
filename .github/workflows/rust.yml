@@ -52,7 +52,7 @@ jobs:
       run: |
         mkdir -p release-package/bin
         cp target/release/tuxedo-daemon release-package/bin/
-        cp target/release/tuxedo-control-center-egui release-package/bin/tuxedo-control-center
+        cp target/release/tuxedo-control-center release-package/bin/
         
         # Copy systemd and dbus files
         mkdir -p release-package/systemd
@@ -126,5 +126,5 @@ jobs:
         name: tuxedo-rs-ubuntu-24.04-binaries
         path: |
           target/release/tuxedo-daemon
-          target/release/tuxedo-control-center-egui
+          target/release/tuxedo-control-center
         retention-days: 90
