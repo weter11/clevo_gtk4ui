@@ -1,7 +1,6 @@
 use anyhow::Result;
 use tuxedo_common::types::*;
 use zbus::Connection;
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]

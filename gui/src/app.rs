@@ -2,7 +2,7 @@ use egui::{Context, CentralPanel, TopBottomPanel};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tuxedo_common::types::*;
-use serde::{Serialize, Deserialize};  // ADD THIS
+  // ADD THIS
 
 use crate::dbus_client::DbusClient;
 use crate::theme::TuxedoTheme;
@@ -479,7 +479,7 @@ fn save_config_to_disk(config: &AppConfig) -> anyhow::Result<()> {
 }
 
 fn read_battery_info() -> anyhow::Result<BatteryInfo> {
-    use std::fs;
+
     let base = if std::path::Path::new("/sys/class/power_supply/BAT0").exists() {
         "/sys/class/power_supply/BAT0"
     } else {

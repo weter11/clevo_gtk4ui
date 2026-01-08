@@ -321,7 +321,7 @@ pub fn set_fan_speed(fan_id: u32, speed_percent: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn set_fan_auto(fan_id: u32) -> Result<()> {
+pub fn set_fan_auto(_fan_id: u32) -> Result<()> {
     if !TuxedoIo::is_available() {
         return Err(anyhow!("Fan control not available"));
     }

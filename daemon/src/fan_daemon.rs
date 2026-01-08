@@ -174,7 +174,7 @@ impl ControlInterface {
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
     
-    async fn test_fan_curve(&self, fan_id: u32, temperature: u8) -> Result<u8, zbus::fdo::Error> {
+    async fn test_fan_curve(&self, _fan_id: u32, _temperature: u8) -> Result<u8, zbus::fdo::Error> {
         // Test what speed would be applied at given temperature
         // This helps users preview their curve
         Ok(50) // Placeholder

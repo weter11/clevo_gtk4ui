@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct BatteryControl {
     battery_path: PathBuf,
