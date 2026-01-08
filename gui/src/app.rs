@@ -343,7 +343,7 @@ impl eframe::App for TuxedoApp {
                     tuning::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
                 Page::Settings => {
-                    settings::draw(ui, &mut self.state);
+                    settings::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
             }
         });

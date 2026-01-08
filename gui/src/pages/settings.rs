@@ -1,7 +1,8 @@
-use egui::{Ui, ScrollArea, RichText, Slider};
+use egui::{Ui, ScrollArea, RichText, Slider, ComboBox};
 use crate::app::AppState;
+use crate::dbus_client::DbusClient;
 
-pub fn draw(ui: &mut Ui, state: &mut AppState) {
+pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>) {
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -164,5 +165,75 @@ pub fn draw(ui: &mut Ui, state: &mut AppState) {
                     let _ = state.save_config();
                 }
             }
+
+            draw_battery_settings(ui, state, dbus_client);
         });
+}
+
+fn draw_battery_settings(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>) {
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(16.0);
+    ui.heading("🔋 Battery Charge Control");
+    ui.add_space(8.0);
+
+    if ui.checkbox(&mut state.config.battery_settings.control_enabled, "Enable charge thresholds").changed() {
+        state.config_dirty = true;
+    }
+    ui.add_space(6.0);
+
+    if state.config.battery_settings.control_enabled {
+        // Start Threshold
+        ui.horizontal(|ui| {
+            ui.label("Start Threshold:");
+            if ComboBox::from_id_source("start_threshold_combo")
+                .selected_text(format!("{}%", state.config.battery_settings.charge_start_threshold))
+                .show_ui(ui, |ui| {
+                    for &threshold in &state.available_start_thresholds {
+                        ui.selectable_value(
+                            &mut state.config.battery_settings.charge_start_threshold,
+                            threshold,
+                            format!("{}%", threshold),
+                        );
+                    }
+                }).response.changed() {
+                state.config_dirty = true;
+            }
+        });
+
+        // End Threshold
+        ui.horizontal(|ui| {
+            ui.label("End Threshold:");
+            if ComboBox::from_id_source("end_threshold_combo")
+                .selected_text(format!("{}%", state.config.battery_settings.charge_end_threshold))
+                .show_ui(ui, |ui| {
+                    for &threshold in &state.available_end_thresholds {
+                        ui.selectable_value(
+                            &mut state.config.battery_settings.charge_end_threshold,
+                            threshold,
+                            format!("{}%", threshold),
+                        );
+                    }
+                }).response.changed() {
+                state.config_dirty = true;
+            }
+        });
+
+        if state.config.battery_settings.charge_start_threshold >= state.config.battery_settings.charge_end_threshold {
+            if let Some(valid_start) = state.available_start_thresholds.iter()
+                .filter(|&&t| t < state.config.battery_settings.charge_end_threshold)
+                .last()
+            {
+                state.config.battery_settings.charge_start_threshold = *valid_start;
+            }
+        }
+
+        if ui.button("💾 Save and Apply Battery Settings").clicked() {
+            let _ = state.save_config();
+            if let Some(client) = dbus_client {
+                let settings = state.config.battery_settings.clone();
+                state.pending_battery_update = Some(client.set_battery_settings(settings));
+            }
+        }
+    }
 }

@@ -130,7 +130,6 @@ pub struct Profile {
     pub keyboard_settings: KeyboardSettings,
     pub screen_settings: ScreenSettings,
     pub fan_settings: FanSettings,
-    pub battery_settings: BatterySettings,
     pub auto_switch: AutoSwitchSettings,
 }
 
@@ -215,6 +214,7 @@ pub struct AppConfig {
     pub tuning_section_order: Vec<String>,
     pub profiles: Vec<Profile>,
     pub current_profile: String,
+    pub battery_settings: BatterySettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -264,6 +264,7 @@ impl Default for AppConfig {
             ],
             profiles: vec![Profile::default()],
             current_profile: "Default".to_string(),
+            battery_settings: BatterySettings::default(),
         }
     }
 }
@@ -318,7 +319,6 @@ impl Default for Profile {
             keyboard_settings: KeyboardSettings::default(),
             screen_settings: ScreenSettings::default(),
             fan_settings: FanSettings::default(),
-            battery_settings: BatterySettings::default(),
             auto_switch: AutoSwitchSettings::default(),
         }
     }

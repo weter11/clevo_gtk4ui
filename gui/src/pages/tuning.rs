@@ -51,16 +51,6 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 ui.separator();
                 ui.add_space(16.0);
 
-                // Battery tuning
-                let start_thresholds = state.available_start_thresholds.clone();
-                let end_thresholds = state.available_end_thresholds.clone();
-                draw_battery_tuning(
-                    ui,
-                    &mut state.config.profiles[idx],
-                    &start_thresholds,
-                    &end_thresholds,
-                );
-                ui.add_space(16.0);
                 
                 // Action buttons
                 ui.horizontal(|ui| {
@@ -269,62 +259,6 @@ fn draw_keyboard_tuning(
         if ui.button("👁️ Preview").clicked() {
             if let Some(client) = dbus_client {
                 let _ = client.preview_keyboard_settings(profile.keyboard_settings.clone());
-            }
-        }
-    }
-}
-
-fn draw_battery_tuning(
-    ui: &mut Ui,
-    profile: &mut Profile,
-    available_start_thresholds: &[u8],
-    available_end_thresholds: &[u8],
-) {
-    ui.heading("🔋 Battery Charge Control");
-    ui.add_space(8.0);
-
-    ui.checkbox(&mut profile.battery_settings.control_enabled, "Enable charge thresholds");
-    ui.add_space(6.0);
-
-    if profile.battery_settings.control_enabled {
-        // Start Threshold
-        ui.horizontal(|ui| {
-            ui.label("Start Threshold:");
-            ComboBox::from_id_source("start_threshold_combo")
-                .selected_text(format!("{}%", profile.battery_settings.charge_start_threshold))
-                .show_ui(ui, |ui| {
-                    for &threshold in available_start_thresholds {
-                        ui.selectable_value(
-                            &mut profile.battery_settings.charge_start_threshold,
-                            threshold,
-                            format!("{}%", threshold),
-                        );
-                    }
-                });
-        });
-
-        // End Threshold
-        ui.horizontal(|ui| {
-            ui.label("End Threshold:");
-            ComboBox::from_id_source("end_threshold_combo")
-                .selected_text(format!("{}%", profile.battery_settings.charge_end_threshold))
-                .show_ui(ui, |ui| {
-                    for &threshold in available_end_thresholds {
-                        ui.selectable_value(
-                            &mut profile.battery_settings.charge_end_threshold,
-                            threshold,
-                            format!("{}%", threshold),
-                        );
-                    }
-                });
-        });
-
-        if profile.battery_settings.charge_start_threshold >= profile.battery_settings.charge_end_threshold {
-            if let Some(valid_start) = available_start_thresholds.iter()
-                .filter(|&&t| t < profile.battery_settings.charge_end_threshold)
-                .last()
-            {
-                profile.battery_settings.charge_start_threshold = *valid_start;
             }
         }
     }

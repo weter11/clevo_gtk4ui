@@ -134,15 +134,12 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
     
     // Apply fan settings - update daemon state
     apply_fan_settings(&profile.fan_settings)?;
-
-    // Apply battery settings
-    apply_battery_settings(&profile.battery_settings)?;
     
     log::info!("Profile '{}' applied successfully", profile.name);
     Ok(())
 }
 
-fn apply_battery_settings(settings: &BatterySettings) -> Result<()> {
+pub fn apply_battery_settings(settings: &BatterySettings) -> Result<()> {
     if !crate::battery_control::BatteryControl::is_available() {
         log::info!("Battery control not available, skipping");
         return Ok(());

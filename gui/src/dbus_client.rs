@@ -23,6 +23,7 @@ pub enum DbusCommand {
     SetBatteryChargeThresholds { start: u8, end: u8, reply: oneshot::Sender<Result<()>> },
     GetBatteryAvailableStartThresholds { reply: oneshot::Sender<Result<Vec<u8>>> },
     GetBatteryAvailableEndThresholds { reply: oneshot::Sender<Result<Vec<u8>>> },
+    SetBatterySettings { settings: BatterySettings, reply: oneshot::Sender<Result<()>> },
 }
 
 impl DbusClient {
@@ -114,6 +115,12 @@ impl DbusClient {
         let _ = self.command_tx.send(DbusCommand::GetBatteryAvailableEndThresholds { reply: tx });
         rx
     }
+
+    pub fn set_battery_settings(&self, settings: BatterySettings) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::SetBatterySettings { settings, reply: tx });
+        rx
+    }
 }
 
 // Background worker - handles all DBus calls asynchronously
@@ -168,6 +175,10 @@ async fn dbus_worker(mut command_rx: mpsc::UnboundedReceiver<DbusCommand>) -> Re
             }
             DbusCommand::GetBatteryAvailableEndThresholds { reply } => {
                 let result = get_battery_available_end_thresholds_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::SetBatterySettings { settings, reply } => {
+                let result = set_battery_settings_impl(&connection, settings).await;
                 let _ = reply.send(result);
             }
         }
@@ -323,4 +334,17 @@ async fn get_battery_available_end_thresholds_impl(conn: &Connection) -> Result<
 
     let json: String = proxy.call("GetBatteryAvailableEndThresholds", &()).await?;
     Ok(serde_json::from_str(&json)?)
+}
+
+async fn set_battery_settings_impl(conn: &Connection, settings: BatterySettings) -> Result<()> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json = serde_json::to_string(&settings)?;
+    proxy.call::<_, _, ()>("SetBatterySettings", &(json.as_str(),)).await?;
+    Ok(())
 }
