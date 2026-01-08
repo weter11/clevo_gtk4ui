@@ -1,4 +1,5 @@
 use egui::{Ui, ScrollArea, CollapsingHeader, Grid, ProgressBar, RichText};
+use egui::Color32;
 use crate::app::AppState;
 use crate::theme::{temp_color, load_color, power_color};
 
