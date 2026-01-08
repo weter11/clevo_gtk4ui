@@ -2,10 +2,12 @@ use egui::{Context, CentralPanel, TopBottomPanel, ViewportCommand};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tuxedo_common::types::*;
+use tokio::sync::oneshot;
 
 use crate::dbus_client::DbusClient;
 use crate::theme::TuxedoTheme;
 use crate::pages::{statistics, profiles, tuning, settings};
+use crate::keyboard_shortcuts::KeyboardShortcuts;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Page {
