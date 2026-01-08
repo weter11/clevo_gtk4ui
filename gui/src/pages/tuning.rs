@@ -2,6 +2,7 @@ use egui::{Ui, ScrollArea, RichText, Slider, ComboBox, DragValue};
 use crate::app::AppState;
 use crate::dbus_client::DbusClient;
 use tuxedo_common::types::KeyboardMode;
+use tuxedo_common::types::Profile;
 
 pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>) {
     ScrollArea::vertical()
