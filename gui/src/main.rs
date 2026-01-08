@@ -3,6 +3,7 @@ mod dbus_client;
 mod theme;
 mod pages;
 mod keyboard_shortcuts;
+mod widgets;
 
 use app::TuxedoApp;
 
