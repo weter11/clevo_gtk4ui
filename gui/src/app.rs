@@ -29,6 +29,8 @@ pub struct AppState {
     pub wifi_info: Vec<WiFiInfo>,
     pub fan_info: Vec<FanInfo>,
     pub storage_info: Vec<StorageInfo>,
+    pub available_start_thresholds: Vec<u8>,
+    pub available_end_thresholds: Vec<u8>,
     
     // UI state
     pub current_page: Page,
@@ -88,6 +90,8 @@ impl AppState {
             wifi_info: Vec::new(),
             fan_info: Vec::new(),
             storage_info: Vec::new(),
+            available_start_thresholds: Vec::new(),
+            available_end_thresholds: Vec::new(),
             current_page: Page::Statistics,
             config_dirty: false,
             status_message: None,
@@ -151,6 +155,7 @@ pub enum HardwareUpdate {
     WifiInfo(Vec<WiFiInfo>),
     FanInfo(Vec<FanInfo>),
     StorageInfo(Vec<StorageInfo>),
+    AvailableThresholds(Vec<u8>, Vec<u8>),
     Error(String),
 }
 
@@ -178,7 +183,24 @@ impl TuxedoApp {
         // Setup background polling
         let (hw_update_tx, hw_update_rx) = mpsc::unbounded_channel();
         if let Some(ref client) = dbus_client {
-            start_background_polling(client.clone(), hw_update_tx);
+            start_background_polling(client.clone(), hw_update_tx.clone());
+
+            // Fetch available thresholds
+            let client_clone = client.clone();
+            tokio::spawn(async move {
+                let start_rx = client_clone.get_battery_available_start_thresholds();
+                let end_rx = client_clone.get_battery_available_end_thresholds();
+
+                match (start_rx.await, end_rx.await) {
+                    (Ok(Ok(start)), Ok(Ok(end))) => {
+                        let _ = hw_update_tx.send(HardwareUpdate::AvailableThresholds(start, end));
+                    }
+                    (Ok(Err(e)), _) => log::warn!("Failed to get start thresholds: {}", e),
+                    (Err(e), _) => log::warn!("Failed to get start thresholds: {}", e),
+                    (_, Ok(Err(e))) => log::warn!("Failed to get end thresholds: {}", e),
+                    (_, Err(e)) => log::warn!("Failed to get end thresholds: {}", e),
+                }
+            });
         }
         
         // Apply theme
@@ -218,6 +240,10 @@ impl TuxedoApp {
                 }
                 HardwareUpdate::StorageInfo(info) => {
                     self.state.storage_info = info;
+                }
+                HardwareUpdate::AvailableThresholds(start, end) => {
+                    self.state.available_start_thresholds = start;
+                    self.state.available_end_thresholds = end;
                 }
                 HardwareUpdate::Error(err) => {
                     log::error!("Hardware update error: {}", err);
@@ -317,7 +343,7 @@ impl eframe::App for TuxedoApp {
                     tuning::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
                 Page::Settings => {
-                    settings::draw(ui, &mut self.state, self.dbus_client.as_ref());
+                    settings::draw(ui, &mut self.state);
                 }
             }
         });

@@ -130,6 +130,7 @@ pub struct Profile {
     pub keyboard_settings: KeyboardSettings,
     pub screen_settings: ScreenSettings,
     pub fan_settings: FanSettings,
+    pub battery_settings: BatterySettings,
     pub auto_switch: AutoSwitchSettings,
 }
 
@@ -180,6 +181,13 @@ pub struct ScreenSettings {
 pub struct FanSettings {
     pub control_enabled: bool,
     pub curves: Vec<FanCurve>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatterySettings {
+    pub control_enabled: bool,
+    pub charge_start_threshold: u8,
+    pub charge_end_threshold: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +268,16 @@ impl Default for AppConfig {
     }
 }
 
+impl Default for BatterySettings {
+    fn default() -> Self {
+        Self {
+            control_enabled: false,
+            charge_start_threshold: 40,
+            charge_end_threshold: 80,
+        }
+    }
+}
+
 impl Default for StatisticsSections {
     fn default() -> Self {
         Self {
@@ -300,6 +318,7 @@ impl Default for Profile {
             keyboard_settings: KeyboardSettings::default(),
             screen_settings: ScreenSettings::default(),
             fan_settings: FanSettings::default(),
+            battery_settings: BatterySettings::default(),
             auto_switch: AutoSwitchSettings::default(),
         }
     }

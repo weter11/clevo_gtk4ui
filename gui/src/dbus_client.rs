@@ -21,6 +21,8 @@ pub enum DbusCommand {
     PreviewKeyboard { settings: KeyboardSettings, reply: oneshot::Sender<Result<()>> },
     GetBatteryChargeThresholds { reply: oneshot::Sender<Result<(u8, u8)>> },
     SetBatteryChargeThresholds { start: u8, end: u8, reply: oneshot::Sender<Result<()>> },
+    GetBatteryAvailableStartThresholds { reply: oneshot::Sender<Result<Vec<u8>>> },
+    GetBatteryAvailableEndThresholds { reply: oneshot::Sender<Result<Vec<u8>>> },
 }
 
 impl DbusClient {
@@ -100,6 +102,18 @@ impl DbusClient {
         });
         rx
     }
+
+    pub fn get_battery_available_start_thresholds(&self) -> oneshot::Receiver<Result<Vec<u8>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetBatteryAvailableStartThresholds { reply: tx });
+        rx
+    }
+
+    pub fn get_battery_available_end_thresholds(&self) -> oneshot::Receiver<Result<Vec<u8>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetBatteryAvailableEndThresholds { reply: tx });
+        rx
+    }
 }
 
 // Background worker - handles all DBus calls asynchronously
@@ -132,6 +146,10 @@ async fn dbus_worker(mut command_rx: mpsc::UnboundedReceiver<DbusCommand>) -> Re
                 let result = set_cpu_governor_impl(&connection, &governor).await;
                 let _ = reply.send(result);
             }
+            DbusCommand::SetCpuBoost { enabled, reply } => {
+                let result = set_cpu_boost_impl(&connection, enabled).await;
+                let _ = reply.send(result);
+            }
             DbusCommand::PreviewKeyboard { settings, reply } => {
                 let result = preview_keyboard_impl(&connection, &settings).await;
                 let _ = reply.send(result);
@@ -142,6 +160,14 @@ async fn dbus_worker(mut command_rx: mpsc::UnboundedReceiver<DbusCommand>) -> Re
             }
             DbusCommand::SetBatteryChargeThresholds { start, end, reply } => {
                 let result = set_battery_thresholds_impl(&connection, start, end).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetBatteryAvailableStartThresholds { reply } => {
+                let result = get_battery_available_start_thresholds_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetBatteryAvailableEndThresholds { reply } => {
+                let result = get_battery_available_end_thresholds_impl(&connection).await;
                 let _ = reply.send(result);
             }
         }
@@ -237,6 +263,18 @@ async fn preview_keyboard_impl(conn: &Connection, settings: &KeyboardSettings) -
     Ok(())
 }
 
+async fn set_cpu_boost_impl(conn: &Connection, enabled: bool) -> Result<()> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    proxy.call::<_, _, ()>("SetCpuBoost", &(enabled,)).await?;
+    Ok(())
+}
+
 async fn get_battery_thresholds_impl(conn: &Connection) -> Result<(u8, u8)> {
     let proxy = zbus::Proxy::new(
         conn,
@@ -261,4 +299,28 @@ async fn set_battery_thresholds_impl(conn: &Connection, start: u8, end: u8) -> R
     proxy.call::<_, _, ()>("SetBatteryChargeStartThreshold", &(start,)).await?;
     proxy.call::<_, _, ()>("SetBatteryChargeEndThreshold", &(end,)).await?;
     Ok(())
+}
+
+async fn get_battery_available_start_thresholds_impl(conn: &Connection) -> Result<Vec<u8>> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetBatteryAvailableStartThresholds", &()).await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn get_battery_available_end_thresholds_impl(conn: &Connection) -> Result<Vec<u8>> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetBatteryAvailableEndThresholds", &()).await?;
+    Ok(serde_json::from_str(&json)?)
 }

@@ -18,10 +18,16 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 ui.heading(format!("Editing Profile: {}", profile_name));
                 ui.add_space(16.0);
                 
-                let cpu_caps = state.cpu_info.as_ref().map(|c| &c.capabilities);
-                
                 // CPU tuning
-                draw_cpu_tuning(ui, &mut state.config.profiles[idx], state, cpu_caps);
+                let cpu_info_clone = state.cpu_info.clone();
+                if let Some(cpu_info) = &cpu_info_clone {
+                    let cpu_caps = Some(&cpu_info.capabilities);
+                    draw_cpu_tuning(ui, &mut state.config.profiles[idx], cpu_caps, cpu_info);
+                } else {
+                    ui.heading("🖥️ CPU Tuning");
+                    ui.add_space(8.0);
+                    ui.label("CPU information not available");
+                }
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(16.0);
@@ -39,7 +45,21 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 ui.add_space(16.0);
                 
                 // Fan tuning
-                draw_fan_tuning(ui, &mut state.config.profiles[idx], state);
+                let fan_count = state.fan_info.len().max(2);
+                draw_fan_tuning(ui, &mut state.config.profiles[idx], fan_count);
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(16.0);
+
+                // Battery tuning
+                let start_thresholds = state.available_start_thresholds.clone();
+                let end_thresholds = state.available_end_thresholds.clone();
+                draw_battery_tuning(
+                    ui,
+                    &mut state.config.profiles[idx],
+                    &start_thresholds,
+                    &end_thresholds,
+                );
                 ui.add_space(16.0);
                 
                 // Action buttons
@@ -71,8 +91,8 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
 fn draw_cpu_tuning(
     ui: &mut Ui,
     profile: &mut Profile,
-    state: &AppState,
     cpu_caps: Option<&tuxedo_common::types::CpuCapabilities>,
+    cpu_info: &tuxedo_common::types::CpuInfo,
 ) {
     ui.heading("🖥️ CPU Tuning");
     ui.add_space(8.0);
@@ -84,8 +104,6 @@ fn draw_cpu_tuning(
             return;
         }
     };
-    
-    let cpu_info = state.cpu_info.as_ref().unwrap();
     
     // Governor
     if caps.has_scaling_governor && !cpu_info.available_governors.is_empty() {
@@ -256,6 +274,62 @@ fn draw_keyboard_tuning(
     }
 }
 
+fn draw_battery_tuning(
+    ui: &mut Ui,
+    profile: &mut Profile,
+    available_start_thresholds: &[u8],
+    available_end_thresholds: &[u8],
+) {
+    ui.heading("🔋 Battery Charge Control");
+    ui.add_space(8.0);
+
+    ui.checkbox(&mut profile.battery_settings.control_enabled, "Enable charge thresholds");
+    ui.add_space(6.0);
+
+    if profile.battery_settings.control_enabled {
+        // Start Threshold
+        ui.horizontal(|ui| {
+            ui.label("Start Threshold:");
+            ComboBox::from_id_source("start_threshold_combo")
+                .selected_text(format!("{}%", profile.battery_settings.charge_start_threshold))
+                .show_ui(ui, |ui| {
+                    for &threshold in available_start_thresholds {
+                        ui.selectable_value(
+                            &mut profile.battery_settings.charge_start_threshold,
+                            threshold,
+                            format!("{}%", threshold),
+                        );
+                    }
+                });
+        });
+
+        // End Threshold
+        ui.horizontal(|ui| {
+            ui.label("End Threshold:");
+            ComboBox::from_id_source("end_threshold_combo")
+                .selected_text(format!("{}%", profile.battery_settings.charge_end_threshold))
+                .show_ui(ui, |ui| {
+                    for &threshold in available_end_thresholds {
+                        ui.selectable_value(
+                            &mut profile.battery_settings.charge_end_threshold,
+                            threshold,
+                            format!("{}%", threshold),
+                        );
+                    }
+                });
+        });
+
+        if profile.battery_settings.charge_start_threshold >= profile.battery_settings.charge_end_threshold {
+            if let Some(valid_start) = available_start_thresholds.iter()
+                .filter(|&&t| t < profile.battery_settings.charge_end_threshold)
+                .last()
+            {
+                profile.battery_settings.charge_start_threshold = *valid_start;
+            }
+        }
+    }
+}
+
 fn draw_screen_tuning(ui: &mut Ui, profile: &mut Profile) {
     ui.heading("🖥️ Screen");
     ui.add_space(8.0);
@@ -271,7 +345,7 @@ fn draw_screen_tuning(ui: &mut Ui, profile: &mut Profile) {
     }
 }
 
-fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &AppState) {
+fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, fan_count: usize) {
     ui.heading("💨 Fan Control");
     ui.add_space(8.0);
     
@@ -279,8 +353,6 @@ fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, state: &AppState) {
     ui.add_space(6.0);
     
     if profile.fan_settings.control_enabled {
-        let fan_count = state.fan_info.len().max(2);
-        
         // Ensure curves exist
         while profile.fan_settings.curves.len() < fan_count {
             let fan_id = profile.fan_settings.curves.len() as u32;
