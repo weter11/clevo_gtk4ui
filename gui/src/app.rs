@@ -1,8 +1,8 @@
-use egui::{Context, CentralPanel, TopBottomPanel, ViewportCommand};
+use egui::{Context, CentralPanel, TopBottomPanel};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tuxedo_common::types::*;
-use tokio::sync::oneshot;
+use serde::{Serialize, Deserialize};  // ADD THIS
 
 use crate::dbus_client::DbusClient;
 use crate::theme::TuxedoTheme;
@@ -27,8 +27,8 @@ pub struct AppState {
     pub gpu_info: Vec<GpuInfo>,
     pub battery_info: Option<BatteryInfo>,
     pub wifi_info: Vec<WiFiInfo>,
-    pub storage_info: Vec<StorageInfo>,
     pub fan_info: Vec<FanInfo>,
+    pub storage_info: Vec<StorageInfo>,
     
     // UI state
     pub current_page: Page,
@@ -40,12 +40,9 @@ pub struct AppState {
     
     // Profile editing
     pub editing_profile_name: Option<String>,
-
-    // DBus client
-    #[serde(skip)]
-    pub dbus_client: Option<DbusClient>,
-    #[serde(skip)]
-    pub pending_battery_update: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
+    
+    // Async state
+    pub pending_battery_update: Option<oneshot::Receiver<Result<(), anyhow::Error>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +59,7 @@ pub struct PollTimers {
     pub battery: Instant,
     pub wifi: Instant,
     pub fans: Instant,
+    pub storage: Instant,
 }
 
 impl Default for PollTimers {
@@ -74,6 +72,7 @@ impl Default for PollTimers {
             battery: now,
             wifi: now,
             fans: now,
+            storage: now,
         }
     }
 }
@@ -88,12 +87,12 @@ impl AppState {
             battery_info: None,
             wifi_info: Vec::new(),
             fan_info: Vec::new(),
+            storage_info: Vec::new(),
             current_page: Page::Statistics,
             config_dirty: false,
             status_message: None,
             last_poll: PollTimers::default(),
             editing_profile_name: None,
-            dbus_client: None,
             pending_battery_update: None,
         }
     }
@@ -133,10 +132,13 @@ impl AppState {
 
 pub struct TuxedoApp {
     state: AppState,
+    dbus_client: Option<DbusClient>,
     theme: TuxedoTheme,
     
     // Background update channel
     hw_update_rx: mpsc::UnboundedReceiver<HardwareUpdate>,
+    
+    // Keyboard shortcuts
     shortcuts: KeyboardShortcuts,
 }
 
@@ -147,8 +149,8 @@ pub enum HardwareUpdate {
     GpuInfo(Vec<GpuInfo>),
     BatteryInfo(BatteryInfo),
     WifiInfo(Vec<WiFiInfo>),
-    StorageInfo(Vec<StorageInfo>),
     FanInfo(Vec<FanInfo>),
+    StorageInfo(Vec<StorageInfo>),
     Error(String),
 }
 
@@ -172,11 +174,10 @@ impl TuxedoApp {
                 None
             }
         };
-        state.dbus_client = dbus_client;
         
         // Setup background polling
         let (hw_update_tx, hw_update_rx) = mpsc::unbounded_channel();
-        if let Some(ref client) = state.dbus_client {
+        if let Some(ref client) = dbus_client {
             start_background_polling(client.clone(), hw_update_tx);
         }
         
@@ -186,6 +187,7 @@ impl TuxedoApp {
         
         Self {
             state,
+            dbus_client,
             theme,
             hw_update_rx,
             shortcuts: KeyboardShortcuts::new(),
@@ -211,14 +213,33 @@ impl TuxedoApp {
                 HardwareUpdate::WifiInfo(info) => {
                     self.state.wifi_info = info;
                 }
-                HardwareUpdate::StorageInfo(info) => {
-    self.state.storage_info = info;
-}
                 HardwareUpdate::FanInfo(info) => {
                     self.state.fan_info = info;
                 }
+                HardwareUpdate::StorageInfo(info) => {
+                    self.state.storage_info = info;
+                }
                 HardwareUpdate::Error(err) => {
                     log::error!("Hardware update error: {}", err);
+                }
+            }
+        }
+        
+        // Check pending battery update
+        if let Some(mut rx) = self.state.pending_battery_update.take() {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    // Success
+                }
+                Ok(Err(e)) => {
+                    self.state.show_message(format!("Battery update failed: {}", e), true);
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    // Still pending, put it back
+                    self.state.pending_battery_update = Some(rx);
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    self.state.show_message("Battery update channel closed", true);
                 }
             }
         }
@@ -274,8 +295,9 @@ impl TuxedoApp {
 
 impl eframe::App for TuxedoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // Handle keyboard shortcuts FIRST
+        // Handle keyboard shortcuts
         self.shortcuts.handle_shortcuts(ctx, &mut self.state);
+        
         // Handle background hardware updates
         self.handle_hardware_updates();
         
@@ -289,13 +311,13 @@ impl eframe::App for TuxedoApp {
                     statistics::draw(ui, &mut self.state);
                 }
                 Page::Profiles => {
-                    profiles::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
+                    profiles::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
                 Page::Tuning => {
-                    tuning::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
+                    tuning::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
                 Page::Settings => {
-                    settings::draw(ui, &mut self.state, self.state.dbus_client.as_ref());
+                    settings::draw(ui, &mut self.state, self.dbus_client.as_ref());
                 }
             }
         });
@@ -313,18 +335,17 @@ fn start_background_polling(
         let mut interval = tokio::time::interval(Duration::from_millis(1000));
         let mut tick_count = 0u64;
         
-        // Keep pending requests to check if they completed
-        let mut pending_cpu: Option<oneshot::Receiver<Result<CpuInfo>>> = None;
-        let mut pending_fans: Option<oneshot::Receiver<Result<Vec<FanInfo>>>> = None;
-        let mut pending_battery: Option<oneshot::Receiver<Result<BatteryInfo>>> = None;
-        let mut pending_system: Option<oneshot::Receiver<Result<SystemInfo>>> = None;
-        let mut pending_gpu: Option<oneshot::Receiver<Result<Vec<GpuInfo>>>> = None;
+        // Keep pending requests
+        let mut pending_cpu: Option<oneshot::Receiver<Result<CpuInfo, anyhow::Error>>> = None;
+        let mut pending_fans: Option<oneshot::Receiver<Result<Vec<FanInfo>, anyhow::Error>>> = None;
+        let mut pending_system: Option<oneshot::Receiver<Result<SystemInfo, anyhow::Error>>> = None;
+        let mut pending_gpu: Option<oneshot::Receiver<Result<Vec<GpuInfo>, anyhow::Error>>> = None;
         
         loop {
             interval.tick().await;
             tick_count += 1;
             
-            // Check completed CPU request
+            // Check and send CPU info
             if let Some(mut rx) = pending_cpu.take() {
                 match rx.try_recv() {
                     Ok(Ok(info)) => {
@@ -334,62 +355,36 @@ fn start_background_polling(
                         log::warn!("CPU info error: {}", e);
                     }
                     Err(oneshot::error::TryRecvError::Empty) => {
-                        // Still waiting, keep it
                         pending_cpu = Some(rx);
                     }
-                    Err(oneshot::error::TryRecvError::Closed) => {
-                        log::error!("CPU info channel closed");
-                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {}
                 }
             }
-            
-            // Start new CPU request if not pending
             if pending_cpu.is_none() {
                 pending_cpu = Some(client.get_cpu_info());
             }
             
-            // Check completed fan request
+            // Check and send fan info
             if let Some(mut rx) = pending_fans.take() {
                 match rx.try_recv() {
                     Ok(Ok(info)) => {
                         let _ = tx.send(HardwareUpdate::FanInfo(info));
                     }
-                    Ok(Err(e)) => {
-                        log::warn!("Fan info error: {}", e);
-                    }
+                    Ok(Err(_)) => {}
                     Err(oneshot::error::TryRecvError::Empty) => {
                         pending_fans = Some(rx);
                     }
-                    Err(oneshot::error::TryRecvError::Closed) => {
-                        log::error!("Fan info channel closed");
-                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {}
                 }
             }
-            
             if pending_fans.is_none() {
                 pending_fans = Some(client.get_fan_info());
             }
             
             // Battery every 5 seconds
             if tick_count % 5 == 0 {
-                if let Some(mut rx) = pending_battery.take() {
-                    match rx.try_recv() {
-                        Ok(Ok(info)) => {
-                            let _ = tx.send(HardwareUpdate::BatteryInfo(info));
-                        }
-                        Ok(Err(_)) => {}
-                        Err(oneshot::error::TryRecvError::Empty) => {
-                            pending_battery = Some(rx);
-                        }
-                        Err(oneshot::error::TryRecvError::Closed) => {}
-                    }
-                }
-                
-                if pending_battery.is_none() {
-                    // Read battery from sysfs directly (faster)
-                    if let Ok(info) = read_battery_info() {
-                        let _ = tx.send(HardwareUpdate::BatteryInfo(info));
-                    }
+                if let Ok(info) = read_battery_info() {
+                    let _ = tx.send(HardwareUpdate::BatteryInfo(info));
                 }
             }
             
@@ -407,7 +402,6 @@ fn start_background_polling(
                         Err(oneshot::error::TryRecvError::Closed) => {}
                     }
                 }
-                
                 if pending_system.is_none() {
                     pending_system = Some(client.get_system_info());
                 }
@@ -427,9 +421,15 @@ fn start_background_polling(
                         Err(oneshot::error::TryRecvError::Closed) => {}
                     }
                 }
-                
                 if pending_gpu.is_none() {
                     pending_gpu = Some(client.get_gpu_info());
+                }
+            }
+            
+            // Storage every 30 seconds
+            if tick_count % 30 == 0 {
+                if let Ok(info) = read_storage_info() {
+                    let _ = tx.send(HardwareUpdate::StorageInfo(info));
                 }
             }
         }
@@ -452,7 +452,27 @@ fn save_config_to_disk(config: &AppConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn read_storage_info() -> Result<Vec<StorageInfo>> {
+fn read_battery_info() -> anyhow::Result<BatteryInfo> {
+    use std::fs;
+    let base = if std::path::Path::new("/sys/class/power_supply/BAT0").exists() {
+        "/sys/class/power_supply/BAT0"
+    } else {
+        "/sys/class/power_supply/BAT1"
+    };
+    
+    Ok(BatteryInfo {
+        voltage_mv: read_sysfs_u64(&format!("{}/voltage_now", base))? / 1000,
+        current_ma: read_sysfs_i64(&format!("{}/current_now", base))? / 1000,
+        charge_percent: read_sysfs_u64(&format!("{}/capacity", base))?,
+        capacity_mah: read_sysfs_u64(&format!("{}/charge_full", base))? / 1000,
+        manufacturer: read_sysfs_string(&format!("{}/manufacturer", base))?,
+        model: read_sysfs_string(&format!("{}/model_name", base))?,
+        charge_start_threshold: read_sysfs_u64(&format!("{}/charge_control_start_threshold", base)).ok().map(|v| v as u8),
+        charge_end_threshold: read_sysfs_u64(&format!("{}/charge_control_end_threshold", base)).ok().map(|v| v as u8),
+    })
+}
+
+fn read_storage_info() -> anyhow::Result<Vec<StorageInfo>> {
     use std::fs;
     let mut storage_devices = Vec::new();
     
@@ -460,20 +480,16 @@ fn read_storage_info() -> Result<Vec<StorageInfo>> {
         let entry = entry?;
         let dev_name = entry.file_name().to_string_lossy().to_string();
         
-        // Skip loop devices and ram
         if dev_name.starts_with("loop") || dev_name.starts_with("ram") {
             continue;
         }
         
         let path = entry.path();
-        
-        // Read model
         let model = fs::read_to_string(path.join("device/model"))
             .unwrap_or_else(|_| dev_name.clone())
             .trim()
             .to_string();
         
-        // Read size (in 512-byte sectors)
         let size_gb = if let Ok(size_str) = fs::read_to_string(path.join("size")) {
             if let Ok(sectors) = size_str.trim().parse::<u64>() {
                 (sectors * 512) / 1_000_000_000
@@ -484,66 +500,15 @@ fn read_storage_info() -> Result<Vec<StorageInfo>> {
             0
         };
         
-        // Try to read temperature from hwmon
-        let temperature = find_storage_temp(&dev_name);
-        
         storage_devices.push(StorageInfo {
             device: format!("/dev/{}", dev_name),
             model,
             size_gb,
-            temperature,
+            temperature: None,
         });
     }
     
     Ok(storage_devices)
-}
-
-fn find_storage_temp(device: &str) -> Option<f32> {
-    use std::fs;
-    
-    // Try hwmon for this device
-    let hwmon_path = format!("/sys/block/{}/device/hwmon", device);
-    if let Ok(entries) = fs::read_dir(&hwmon_path) {
-        for entry in entries.flatten() {
-            let temp_path = entry.path().join("temp1_input");
-            if let Ok(temp_str) = fs::read_to_string(&temp_path) {
-                if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
-                    return Some(temp_millideg as f32 / 1000.0);
-                }
-            }
-        }
-    }
-    
-    // Try drivetemp module
-    let drivetemp_path = format!("/sys/class/scsi_disk/0:0:0:0/device/hwmon");
-    if let Ok(entries) = fs::read_dir(&drivetemp_path) {
-        for entry in entries.flatten() {
-            let temp_path = entry.path().join("temp1_input");
-            if let Ok(temp_str) = fs::read_to_string(&temp_path) {
-                if let Ok(temp_millideg) = temp_str.trim().parse::<i32>() {
-                    return Some(temp_millideg as f32 / 1000.0);
-                }
-            }
-        }
-    }
-    
-    None
-}
-
-fn read_battery_info() -> anyhow::Result<BatteryInfo> {
-    // Direct sysfs reading for speed
-    let base = "/sys/class/power_supply/BAT0";
-    
-    Ok(BatteryInfo {
-        voltage_mv: read_sysfs_u64(&format!("{}/voltage_now", base))? / 1000,
-        current_ma: read_sysfs_i64(&format!("{}/current_now", base))? / 1000,
-        charge_percent: read_sysfs_u64(&format!("{}/capacity", base))?,
-        capacity_mah: read_sysfs_u64(&format!("{}/charge_full", base))? / 1000,
-        manufacturer: read_sysfs_string(&format!("{}/manufacturer", base))?,
-        model: read_sysfs_string(&format!("{}/model_name", base))?,
-        charge_start_threshold: None,
-        charge_end_threshold: None,
-    })
 }
 
 fn read_sysfs_u64(path: &str) -> anyhow::Result<u64> {
