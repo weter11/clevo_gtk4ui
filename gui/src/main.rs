@@ -9,6 +9,11 @@ use app::TuxedoApp;
 
 fn main() -> Result<(), eframe::Error> {
     env_logger::init();
+
+    // Create and enter a Tokio runtime context.
+    // This is required for `tokio::spawn` to work in the `DbusClient`.
+    let rt = tokio::runtime::Runtime::new().expect("Unable to create a Tokio runtime");
+    let _enter = rt.enter();
     
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

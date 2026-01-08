@@ -112,11 +112,9 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 
                 // Apply to hardware
                 if let Some(client) = dbus_client {
-                    if let Err(e) = client.apply_profile(&state.config.profiles[idx]) {
-                        state.show_message(format!("Failed to apply profile: {}", e), true);
-                    } else {
-                        state.show_message(format!("Profile '{}' applied", state.config.profiles[idx].name), false);
-                    }
+                    let profile_clone = state.config.profiles[idx].clone();
+                    let _rx = client.apply_profile(profile_clone);
+                    state.show_message(format!("Applying profile '{}'", state.config.profiles[idx].name), false);
                 }
             }
             

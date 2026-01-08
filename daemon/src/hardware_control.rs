@@ -139,6 +139,31 @@ pub fn apply_profile(profile: &Profile) -> Result<()> {
     Ok(())
 }
 
+pub fn apply_battery_settings(settings: &BatterySettings) -> Result<()> {
+    if !crate::battery_control::BatteryControl::is_available() {
+        log::info!("Battery control not available, skipping");
+        return Ok(());
+    }
+
+    let battery = crate::battery_control::BatteryControl::new()?;
+
+    if settings.control_enabled {
+        battery.set_charge_type("Custom")?;
+        battery.set_charge_control_start_threshold(settings.charge_start_threshold)?;
+        battery.set_charge_control_end_threshold(settings.charge_end_threshold)?;
+        log::info!(
+            "Set battery thresholds: start={}, end={}",
+            settings.charge_start_threshold,
+            settings.charge_end_threshold
+        );
+    } else {
+        battery.set_charge_type("Standard")?;
+        log::info!("Set battery charge type to Standard");
+    }
+
+    Ok(())
+}
+
 fn apply_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
     if !settings.control_enabled {
         log::info!("Keyboard control disabled, skipping");

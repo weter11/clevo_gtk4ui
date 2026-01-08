@@ -183,6 +183,13 @@ pub struct FanSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatterySettings {
+    pub control_enabled: bool,
+    pub charge_start_threshold: u8,
+    pub charge_end_threshold: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FanCurve {
     pub fan_id: u32,
     pub points: Vec<(u8, u8)>, // (temperature, speed) - 8 points
@@ -207,6 +214,7 @@ pub struct AppConfig {
     pub tuning_section_order: Vec<String>,
     pub profiles: Vec<Profile>,
     pub current_profile: String,
+    pub battery_settings: BatterySettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -256,6 +264,17 @@ impl Default for AppConfig {
             ],
             profiles: vec![Profile::default()],
             current_profile: "Default".to_string(),
+            battery_settings: BatterySettings::default(),
+        }
+    }
+}
+
+impl Default for BatterySettings {
+    fn default() -> Self {
+        Self {
+            control_enabled: false,
+            charge_start_threshold: 40,
+            charge_end_threshold: 80,
         }
     }
 }

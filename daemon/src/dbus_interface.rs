@@ -261,6 +261,13 @@ async fn set_tdp_profile(&self, profile: &str) -> Result<(), zbus::fdo::Error> {
         crate::hardware_control::preview_keyboard_settings(&settings)
             .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
     }
+
+    async fn set_battery_settings(&self, settings_json: &str) -> Result<(), zbus::fdo::Error> {
+        let settings: BatterySettings = serde_json::from_str(settings_json)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        crate::hardware_control::apply_battery_settings(&settings)
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))
+    }
 }
 
 pub async fn start_service(_connection: Connection) -> Result<()> {
