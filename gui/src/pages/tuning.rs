@@ -1,80 +1,85 @@
-use egui::{Ui, ScrollArea, RichText, Slider, ComboBox};
+use egui::{Ui, ScrollArea, RichText, Slider, ComboBox, TopBottomPanel};
 use crate::app::AppState;
 use crate::dbus_client::DbusClient;
-use tuxedo_common::types::{KeyboardMode, Profile, FanCurve};  // ADD FanCurve
-use crate::widgets::fan_curve_editor::FanCurveEditor;  // ADD this
+use tuxedo_common::types::{KeyboardMode, Profile, FanCurve};
+use crate::widgets::fan_curve_editor::FanCurveEditor;
 
 pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>) {
+    let profile_idx = state.current_profile_index();
+    
+    if profile_idx.is_none() {
+        ui.label("No profile selected");
+        return;
+    }
+    
+    let idx = profile_idx.unwrap();
+    let profile_name = state.config.profiles[idx].name.clone();
+    let is_standard = profile_name == "Standard";
+    
+    // Top bar with profile name, save, and reset buttons
+    TopBottomPanel::top("tuning_header").show_inside(ui, |ui| {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.heading(format!("Editing: {}", profile_name));
+            
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Save button - always visible
+                if ui.button("💾 Save").clicked() {
+                    let _ = state.save_config();
+                    
+                    // Also apply to hardware
+                    if let Some(client) = dbus_client {
+                        let profile_clone = state.config.profiles[idx].clone();
+                        let _rx = client.apply_profile(profile_clone);
+                    }
+                }
+                
+                // Reset to default button
+                if ui.button("↺ Reset to Default").clicked() {
+                    state.config.profiles[idx] = create_default_profile_for_reset(is_standard);
+                    state.show_message("Profile reset to default settings (not saved)", false);
+                }
+            });
+        });
+        ui.add_space(8.0);
+    });
+    
+    // Main content
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add_space(8.0);
             
-            let profile_name = state.config.current_profile.clone();
-            let profile_idx = state.config.profiles.iter()
-                .position(|p| p.name == profile_name);
-            
-            if let Some(idx) = profile_idx {
-                ui.heading(format!("Editing Profile: {}", profile_name));
-                ui.add_space(16.0);
-                
-                // CPU tuning
-                let cpu_info_clone = state.cpu_info.clone();
-                if let Some(cpu_info) = &cpu_info_clone {
-                    let cpu_caps = Some(&cpu_info.capabilities);
-                    draw_cpu_tuning(ui, &mut state.config.profiles[idx], cpu_caps, cpu_info);
-                } else {
-                    ui.heading("🖥️ CPU Tuning");
-                    ui.add_space(8.0);
-                    ui.label("CPU information not available");
-                }
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
-                
-                // Keyboard tuning
-                draw_keyboard_tuning(ui, &mut state.config.profiles[idx], dbus_client);
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
-                
-                // Screen tuning
-                draw_screen_tuning(ui, &mut state.config.profiles[idx]);
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
-                
-                // Fan tuning
-                let fan_count = state.fan_info.len().max(2);
-                draw_fan_tuning(ui, &mut state.config.profiles[idx], fan_count);
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
-
-                
-                // Action buttons
-                ui.horizontal(|ui| {
-                    if ui.button("💾 Save & Apply Profile").clicked() {
-                        state.config_dirty = false;
-                        let _ = state.save_config();
-                        
-                        if let Some(client) = dbus_client {
-                            let profile_clone = state.config.profiles[idx].clone();
-                            let rx = client.apply_profile(profile_clone);
-                            // Result handled in background
-                        }
-                    }
-                    
-                    if ui.button("↺ Reset to Saved").clicked() {
-                        state.load_config();
-                        state.show_message("Profile reset to saved state", false);
-                    }
-                });
-                
-                state.config_dirty = true;
+            // CPU tuning
+            let cpu_info_clone = state.cpu_info.clone();
+            if let Some(cpu_info) = &cpu_info_clone {
+                let cpu_caps = Some(&cpu_info.capabilities);
+                draw_cpu_tuning(ui, &mut state.config.profiles[idx], cpu_caps, cpu_info);
             } else {
-                ui.label("No profile selected");
+                ui.heading("🖥️ CPU Tuning");
+                ui.add_space(8.0);
+                ui.label("CPU information not available");
             }
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(16.0);
+            
+            // Keyboard tuning
+            draw_keyboard_tuning(ui, &mut state.config.profiles[idx], dbus_client);
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(16.0);
+            
+            // Screen tuning
+            draw_screen_tuning(ui, &mut state.config.profiles[idx]);
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(16.0);
+            
+            // Fan tuning
+            let fan_count = state.fan_info.len().max(2);
+            draw_fan_tuning(ui, &mut state.config.profiles[idx], fan_count);
+            ui.add_space(16.0);
         });
 }
 
@@ -95,14 +100,38 @@ fn draw_cpu_tuning(
         }
     };
     
+    // AMD P-State section (if available)
+    if caps.has_amd_pstate {
+        ui.label(RichText::new("AMD P-State Mode:").strong());
+        ui.horizontal(|ui| {
+            let mut current_pstate = profile.cpu_settings.amd_pstate_status
+                .clone()
+                .unwrap_or_else(|| "active".to_string());
+            
+            ComboBox::from_id_source("amd_pstate_combo")
+                .selected_text(&current_pstate)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut current_pstate, "active".to_string(), "Active");
+                    ui.selectable_value(&mut current_pstate, "passive".to_string(), "Passive");
+                    ui.selectable_value(&mut current_pstate, "guided".to_string(), "Guided");
+                });
+            
+            profile.cpu_settings.amd_pstate_status = Some(current_pstate);
+            
+            ui.label(RichText::new("(Active = best performance, Passive = better efficiency)")
+                .small()
+                .italics());
+        });
+        ui.add_space(6.0);
+    }
+    
     // Governor
     if caps.has_scaling_governor && !cpu_info.available_governors.is_empty() {
+        ui.label(RichText::new("Governor:").strong());
         ui.horizontal(|ui| {
-            ui.label("Governor:");
-            
             let mut current_gov = profile.cpu_settings.governor
                 .clone()
-                .unwrap_or_else(|| "auto".to_string());
+                .unwrap_or_else(|| "schedutil".to_string());
             
             ComboBox::from_id_source("governor_combo")
                 .selected_text(&current_gov)
@@ -119,9 +148,8 @@ fn draw_cpu_tuning(
     
     // EPP
     if caps.has_energy_performance_preference && !cpu_info.available_epp_options.is_empty() {
+        ui.label(RichText::new("Energy Performance Preference:").strong());
         ui.horizontal(|ui| {
-            ui.label("Energy Performance:");
-            
             let mut current_epp = profile.cpu_settings.energy_performance_preference
                 .clone()
                 .unwrap_or_else(|| "balance_performance".to_string());
@@ -311,5 +339,52 @@ fn draw_fan_tuning(ui: &mut Ui, profile: &mut Profile, fan_count: usize) {
                     });
             }
         }
+    }
+}
+
+fn create_default_profile_for_reset(is_standard: bool) -> Profile {
+    use tuxedo_common::types::*;
+    
+    if is_standard {
+        Profile {
+            name: "Standard".to_string(),
+            is_default: true,
+            cpu_settings: CpuSettings {
+                governor: Some("schedutil".to_string()),
+                min_frequency: None,
+                max_frequency: None,
+                boost: Some(true),
+                smt: Some(true),
+                performance_profile: None,
+                tdp_profile: None,
+                energy_performance_preference: Some("balance_performance".to_string()),
+                tdp: None,
+                amd_pstate_status: Some("active".to_string()),
+            },
+            gpu_settings: GpuSettings { dgpu_tdp: None },
+            keyboard_settings: KeyboardSettings {
+                control_enabled: false,
+                mode: KeyboardMode::SingleColor {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    brightness: 50,
+                },
+            },
+            screen_settings: ScreenSettings {
+                brightness: 50,
+                system_control: true,
+            },
+            fan_settings: FanSettings {
+                control_enabled: false,
+                curves: vec![],
+            },
+            auto_switch: AutoSwitchSettings {
+                enabled: false,
+                app_names: vec![],
+            },
+        }
+    } else {
+        Profile::default()
     }
 }
