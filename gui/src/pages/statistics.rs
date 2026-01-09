@@ -30,15 +30,14 @@ pub fn draw(ui: &mut Ui, state: &mut AppState) {
             }
 
             if state.config.statistics_sections.show_wifi {
-    draw_wifi_info(ui, state);
-    ui.add_space(12.0);
-}
+                draw_wifi_info(ui, state);
+                ui.add_space(12.0);
+            }
 
-if state.config.statistics_sections.show_storage {
-    draw_storage_info(ui, state);
-    ui.add_space(12.0);
-}
-
+            if state.config.statistics_sections.show_storage {
+                draw_storage_info(ui, state);
+                ui.add_space(12.0);
+            }
             
             if state.config.statistics_sections.show_fans {
                 draw_fan_info(ui, state);
@@ -49,7 +48,7 @@ if state.config.statistics_sections.show_storage {
 
 fn draw_system_info(ui: &mut Ui, state: &AppState) {
     CollapsingHeader::new(RichText::new("📊 System Information").heading())
-        .default_open(false)
+        .default_open(true)  // Changed to true
         .show(ui, |ui| {
             if let Some(ref info) = state.system_info {
                 Grid::new("system_grid")
@@ -86,18 +85,15 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                     .spacing([40.0, 8.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        // Processor name
                         ui.label("Processor:");
                         ui.label(&cpu.name);
                         ui.end_row();
                         
-                        // Frequency with real-time update
                         ui.label("Median Frequency:");
                         ui.label(RichText::new(format!("{} MHz", cpu.median_frequency / 1000))
                             .monospace());
                         ui.end_row();
                         
-                        // Load with progress bar and color coding
                         ui.label("Median Load:");
                         ui.horizontal(|ui| {
                             ui.add(
@@ -108,7 +104,6 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                         });
                         ui.end_row();
                         
-                        // Temperature with color coding
                         ui.label("Package Temperature:");
                         ui.colored_label(
                             temp_color(cpu.package_temp),
@@ -118,7 +113,6 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                         );
                         ui.end_row();
                         
-                        // Power draw if available
                         if let Some(power) = cpu.package_power {
                             ui.label("Package Power:");
                             ui.horizontal(|ui| {
@@ -138,7 +132,6 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                             ui.end_row();
                         }
                         
-                        // Additional power sources if available
                         if !cpu.all_power_sources.is_empty() && cpu.all_power_sources.len() > 1 {
                             ui.label("All Power Sources:");
                             ui.vertical(|ui| {
@@ -158,7 +151,6 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                         ui.separator();
                         ui.end_row();
                         
-                        // CPU Settings
                         if cpu.capabilities.has_scaling_driver {
                             ui.label("Scaling Driver:");
                             ui.label(&cpu.scaling_driver);
@@ -200,7 +192,7 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
                         }
                     });
                 
-                // Per-core details (collapsible)
+                // Per-core details (still collapsed by default)
                 ui.add_space(8.0);
                 CollapsingHeader::new(format!("Core Details ({} cores)", cpu.cores.len()))
                     .default_open(false)
@@ -242,7 +234,7 @@ fn draw_cpu_info(ui: &mut Ui, state: &AppState) {
 
 fn draw_gpu_info(ui: &mut Ui, state: &AppState) {
     CollapsingHeader::new(RichText::new("🎮 GPU").heading())
-        .default_open(false)
+        .default_open(true)  // Changed to true
         .show(ui, |ui| {
             if !state.gpu_info.is_empty() {
                 for (idx, gpu) in state.gpu_info.iter().enumerate() {
@@ -316,7 +308,6 @@ fn draw_battery_info(ui: &mut Ui, state: &AppState) {
                     .spacing([40.0, 8.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        // Capacity with large progress bar
                         ui.label("Capacity:");
                         ui.horizontal(|ui| {
                             ui.add(
@@ -336,7 +327,6 @@ fn draw_battery_info(ui: &mut Ui, state: &AppState) {
                         ui.label(format!("{:.2} A", current_a.abs()));
                         ui.end_row();
                         
-                        // Power draw (calculated)
                         let power_w = (battery.voltage_mv as f64 * battery.current_ma as f64) / 1_000_000.0;
                         if power_w.abs() > 0.1 {
                             ui.label("Power:");
@@ -358,7 +348,6 @@ fn draw_battery_info(ui: &mut Ui, state: &AppState) {
                         ui.label(&battery.model);
                         ui.end_row();
                         
-                        // Charge thresholds if available
                         if let Some(start) = battery.charge_start_threshold {
                             ui.label("Charge Start:");
                             ui.label(format!("{}%", start));
@@ -379,7 +368,7 @@ fn draw_battery_info(ui: &mut Ui, state: &AppState) {
 
 fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
     CollapsingHeader::new(RichText::new("📶 WiFi").heading())
-        .default_open(true)
+        .default_open(true)  // Changed to true
         .show(ui, |ui| {
             if !state.wifi_info.is_empty() {
                 for wifi in &state.wifi_info {
@@ -394,20 +383,17 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                             ui.label(&wifi.driver);
                             ui.end_row();
                             
-                            // Signal strength with visual indicator
                             if let Some(signal) = wifi.signal_level {
                                 ui.label("Signal Level:");
                                 ui.horizontal(|ui| {
-                                    // Convert dBm to percentage (rough approximation)
-                                    // -30 dBm = excellent, -90 dBm = unusable
                                     let signal_percent = ((signal + 90) as f32 / 60.0).clamp(0.0, 1.0);
                                     
                                     let color = if signal_percent > 0.7 {
-                                        Color32::from_rgb(100, 200, 120)  // Good - green
+                                        Color32::from_rgb(100, 200, 120)
                                     } else if signal_percent > 0.4 {
-                                        Color32::from_rgb(255, 200, 60)   // Medium - yellow
+                                        Color32::from_rgb(255, 200, 60)
                                     } else {
-                                        Color32::from_rgb(255, 100, 80)   // Weak - red
+                                        Color32::from_rgb(255, 100, 80)
                                     };
                                     
                                     ui.add(
@@ -420,7 +406,6 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                                 ui.end_row();
                             }
                             
-                            // Channel
                             if let Some(channel) = wifi.channel {
                                 ui.label("Channel:");
                                 ui.horizontal(|ui| {
@@ -435,7 +420,6 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                                 ui.end_row();
                             }
                             
-                            // Transfer rates
                             if let Some(tx_rate) = wifi.tx_rate {
                                 ui.label("TX Rate:");
                                 ui.label(RichText::new(format!("{:.1} Mbps", tx_rate))
@@ -450,7 +434,6 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                                 ui.end_row();
                             }
                             
-                            // Temperature if available
                             if let Some(temp) = wifi.temperature {
                                 ui.label("Temperature:");
                                 ui.colored_label(
@@ -471,7 +454,7 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
 
 fn draw_storage_info(ui: &mut Ui, state: &AppState) {
     CollapsingHeader::new(RichText::new("💾 Storage").heading())
-        .default_open(false)
+        .default_open(true)  // Changed to true
         .show(ui, |ui| {
             if !state.storage_info.is_empty() {
                 Grid::new("storage_grid")
@@ -481,12 +464,37 @@ fn draw_storage_info(ui: &mut Ui, state: &AppState) {
                     .show(ui, |ui| {
                         for storage in &state.storage_info {
                             ui.label(RichText::new(&storage.model).strong());
-                            ui.label(format!("{} GB", storage.size_gb));
+                            ui.label(format!("{} GB total", storage.size_gb));
                             ui.end_row();
                             
                             ui.label("Device:");
                             ui.label(RichText::new(&storage.device).monospace());
                             ui.end_row();
+                            
+                            // Try to get free space using statvfs
+                            if let Ok(free_gb) = get_free_space(&storage.device) {
+                                let used_gb = storage.size_gb.saturating_sub(free_gb);
+                                let used_percent = if storage.size_gb > 0 {
+                                    (used_gb as f32 / storage.size_gb as f32) * 100.0
+                                } else {
+                                    0.0
+                                };
+                                
+                                ui.label("Usage:");
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        ProgressBar::new(used_percent / 100.0)
+                                            .text(format!("{} GB / {} GB ({:.1}%)", 
+                                                used_gb, storage.size_gb, used_percent))
+                                            .desired_width(200.0)
+                                    );
+                                });
+                                ui.end_row();
+                                
+                                ui.label("Free:");
+                                ui.label(format!("{} GB", free_gb));
+                                ui.end_row();
+                            }
                             
                             if let Some(temp) = storage.temperature {
                                 ui.label("Temperature:");
@@ -504,10 +512,6 @@ fn draw_storage_info(ui: &mut Ui, state: &AppState) {
                     });
             } else {
                 ui.label("No storage devices detected");
-                ui.add_space(6.0);
-                ui.label(RichText::new("Reading from /sys/block...")
-                    .small()
-                    .italics());
             }
         });
 }
@@ -564,4 +568,39 @@ fn draw_fan_info(ui: &mut Ui, state: &AppState) {
                 ui.label("No fan information available");
             }
         });
+}
+
+fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    
+    // Try to find mount point for this device
+    let output = std::process::Command::new("findmnt")
+        .args(&["-n", "-o", "TARGET", "--source", device])
+        .output()?;
+    
+    if !output.status.success() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Not mounted"));
+    }
+    
+    let mount_point = String::from_utf8_lossy(&output.stdout);
+    let mount_point = mount_point.trim();
+    
+    if mount_point.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point"));
+    }
+    
+    // Use statvfs to get space info
+    let path = CString::new(mount_point)?;
+    let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
+    
+    unsafe {
+        if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) == 0 {
+            let stat = stat.assume_init();
+            let free_bytes = stat.f_bavail * stat.f_bsize;
+            Ok(free_bytes / 1_000_000_000)
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
 }
