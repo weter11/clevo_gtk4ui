@@ -131,7 +131,12 @@ fn draw_cpu_tuning(
         ui.horizontal(|ui| {
             let mut current_gov = profile.cpu_settings.governor
                 .clone()
-                .unwrap_or_else(|| "schedutil".to_string());
+                .unwrap_or_else(|| {
+                    // Use first available governor as default
+                    cpu_info.available_governors.first()
+                        .cloned()
+                        .unwrap_or_else(|| "performance".to_string())
+                });
             
             ComboBox::from_id_source("governor_combo")
                 .selected_text(&current_gov)
@@ -176,18 +181,33 @@ fn draw_cpu_tuning(
         let mut max_freq = profile.cpu_settings.max_frequency
             .unwrap_or(cpu_info.hw_max_freq) as f64 / 1000.0;
         
+        // Ensure min <= max
+        if min_freq > max_freq {
+            min_freq = max_freq;
+        }
+        
         ui.horizontal(|ui| {
             ui.label("Min:");
-            ui.add(Slider::new(&mut min_freq, 
+            if ui.add(Slider::new(&mut min_freq, 
                 (cpu_info.hw_min_freq / 1000) as f64..=(cpu_info.hw_max_freq / 1000) as f64)
-                .suffix(" MHz"));
+                .suffix(" MHz")).changed() {
+                // Ensure min doesn't exceed max
+                if min_freq > max_freq {
+                    max_freq = min_freq;
+                }
+            }
         });
         
         ui.horizontal(|ui| {
             ui.label("Max:");
-            ui.add(Slider::new(&mut max_freq,
+            if ui.add(Slider::new(&mut max_freq,
                 (cpu_info.hw_min_freq / 1000) as f64..=(cpu_info.hw_max_freq / 1000) as f64)
-                .suffix(" MHz"));
+                .suffix(" MHz")).changed() {
+                // Ensure max doesn't go below min
+                if max_freq < min_freq {
+                    min_freq = max_freq;
+                }
+            }
         });
         
         profile.cpu_settings.min_frequency = Some((min_freq * 1000.0) as u64);
@@ -196,13 +216,21 @@ fn draw_cpu_tuning(
         ui.add_space(6.0);
     }
     
-    // Checkboxes
+    // Boost checkbox
     if caps.has_boost {
         let mut boost = profile.cpu_settings.boost.unwrap_or(true);
         ui.checkbox(&mut boost, "CPU Boost / Turbo");
         profile.cpu_settings.boost = Some(boost);
+        
+        // Show if boost is available for current pstate
+        if caps.has_amd_pstate {
+            ui.label(RichText::new("(Available in all AMD P-State modes)")
+                .small()
+                .italics());
+        }
     }
     
+    // SMT checkbox
     if caps.has_smt {
         let mut smt = profile.cpu_settings.smt.unwrap_or(true);
         ui.checkbox(&mut smt, "SMT / Hyperthreading");
