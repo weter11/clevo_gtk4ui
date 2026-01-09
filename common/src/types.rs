@@ -27,9 +27,11 @@ pub struct CpuInfo {
     pub max_freq: Option<u64>,
     pub hw_min_freq: u64,
     pub hw_max_freq: u64,
-    pub energy_performance_preference: Option<String>,  // ADD
-    pub available_epp_options: Vec<String>,             // ADD
-    pub capabilities: CpuCapabilities,                   // ADD
+    pub energy_performance_preference: Option<String>,
+    pub available_epp_options: Vec<String>,
+    pub scheduler: String,
+    pub available_schedulers: Vec<String>,
+    pub capabilities: CpuCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
