@@ -434,10 +434,6 @@ impl RgbKeyboardControl {
         Ok(Self { base_path })
     }
     
-    pub fn is_available() -> bool {
-        Self::find_keyboard_backlight_path().is_ok()
-    }
-    
     fn find_keyboard_backlight_path() -> Result<String> {
         let possible_paths = vec![
             "/sys/class/leds/rgb:kbd_backlight",
@@ -485,23 +481,6 @@ impl RgbKeyboardControl {
         
         log::info!("Set keyboard brightness to {}%", brightness);
         Ok(())
-    }
-    
-    pub fn get_brightness(&self) -> Result<u8> {
-        let brightness_path = format!("{}/brightness", self.base_path);
-        let max_brightness_path = format!("{}/max_brightness", self.base_path);
-        
-        let current: u32 = fs::read_to_string(&brightness_path)?
-            .trim()
-            .parse()?;
-        
-        let max: u32 = fs::read_to_string(&max_brightness_path)?
-            .trim()
-            .parse()
-            .unwrap_or(255);
-        
-        let percent = ((current * 100) / max) as u8;
-        Ok(percent)
     }
     
     pub fn set_mode(&self, mode: &tuxedo_common::types::KeyboardMode) -> Result<()> {

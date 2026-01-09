@@ -37,9 +37,6 @@ pub struct AppState {
     pub config_dirty: bool,
     pub status_message: Option<StatusMessage>,
     
-    // Polling control
-    pub last_poll: PollTimers,
-    
     // Profile editing
     pub editing_profile_name: Option<String>,
     
@@ -52,31 +49,6 @@ pub struct StatusMessage {
     pub text: String,
     pub is_error: bool,
     pub shown_at: Instant,
-}
-
-pub struct PollTimers {
-    pub system_info: Instant,
-    pub cpu: Instant,
-    pub gpu: Instant,
-    pub battery: Instant,
-    pub wifi: Instant,
-    pub fans: Instant,
-    pub storage: Instant,
-}
-
-impl Default for PollTimers {
-    fn default() -> Self {
-        let now = Instant::now();
-        Self {
-            system_info: now,
-            cpu: now,
-            gpu: now,
-            battery: now,
-            wifi: now,
-            fans: now,
-            storage: now,
-        }
-    }
 }
 
 impl AppState {
@@ -95,7 +67,6 @@ impl AppState {
             current_page: Page::Statistics,
             config_dirty: false,
             status_message: None,
-            last_poll: PollTimers::default(),
             editing_profile_name: None,
             pending_battery_update: None,
         }
@@ -121,23 +92,11 @@ impl AppState {
             shown_at: Instant::now(),
         });
     }
-    
-    pub fn current_profile(&self) -> Option<&Profile> {
-        self.config.profiles.iter()
-            .find(|p| p.name == self.config.current_profile)
-    }
-    
-    pub fn current_profile_mut(&mut self) -> Option<&mut Profile> {
-        let current = self.config.current_profile.clone();
-        self.config.profiles.iter_mut()
-            .find(|p| p.name == current)
-    }
 }
 
 pub struct TuxedoApp {
     state: AppState,
     dbus_client: Option<DbusClient>,
-    theme: TuxedoTheme,
     
     // Background update channel
     hw_update_rx: mpsc::UnboundedReceiver<HardwareUpdate>,
@@ -152,11 +111,9 @@ pub enum HardwareUpdate {
     CpuInfo(CpuInfo),
     GpuInfo(Vec<GpuInfo>),
     BatteryInfo(BatteryInfo),
-    WifiInfo(Vec<WiFiInfo>),
     FanInfo(Vec<FanInfo>),
     StorageInfo(Vec<StorageInfo>),
     AvailableThresholds(Vec<u8>, Vec<u8>),
-    Error(String),
 }
 
 impl TuxedoApp {
@@ -210,7 +167,6 @@ impl TuxedoApp {
         Self {
             state,
             dbus_client,
-            theme,
             hw_update_rx,
             shortcuts: KeyboardShortcuts::new(),
         }
@@ -232,9 +188,6 @@ impl TuxedoApp {
                 HardwareUpdate::BatteryInfo(info) => {
                     self.state.battery_info = Some(info);
                 }
-                HardwareUpdate::WifiInfo(info) => {
-                    self.state.wifi_info = info;
-                }
                 HardwareUpdate::FanInfo(info) => {
                     self.state.fan_info = info;
                 }
@@ -244,9 +197,6 @@ impl TuxedoApp {
                 HardwareUpdate::AvailableThresholds(start, end) => {
                     self.state.available_start_thresholds = start;
                     self.state.available_end_thresholds = end;
-                }
-                HardwareUpdate::Error(err) => {
-                    log::error!("Hardware update error: {}", err);
                 }
             }
         }
@@ -284,13 +234,6 @@ impl TuxedoApp {
                 ui.selectable_value(&mut self.state.current_page, Page::Settings, "⚙️ Settings");
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Save button (only show if config is dirty)
-                    if self.state.config_dirty {
-                        if ui.button("💾 Save").clicked() {
-                            let _ = self.state.save_config();
-                        }
-                    }
-                    
                     // Current profile indicator
                     ui.label(format!("Profile: {}", self.state.config.current_profile));
                 });

@@ -186,7 +186,7 @@ fn draw_battery_settings(ui: &mut Ui, state: &mut AppState, dbus_client: Option<
         // Start Threshold
         ui.horizontal(|ui| {
             ui.label("Start Threshold:");
-            if ComboBox::from_id_source("start_threshold_combo")
+            if ComboBox::new("start_threshold_combo", "")
                 .selected_text(format!("{}%", state.config.battery_settings.charge_start_threshold))
                 .show_ui(ui, |ui| {
                     for &threshold in &state.available_start_thresholds {
@@ -204,7 +204,7 @@ fn draw_battery_settings(ui: &mut Ui, state: &mut AppState, dbus_client: Option<
         // End Threshold
         ui.horizontal(|ui| {
             ui.label("End Threshold:");
-            if ComboBox::from_id_source("end_threshold_combo")
+            if ComboBox::new("end_threshold_combo", "")
                 .selected_text(format!("{}%", state.config.battery_settings.charge_end_threshold))
                 .show_ui(ui, |ui| {
                     for &threshold in &state.available_end_thresholds {
