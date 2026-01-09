@@ -272,8 +272,7 @@ fn get_amd_dgpu_count() -> u32 {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name() {
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("card") && !name_str.contains("-") {
+                if name.to_string_lossy().starts_with("card") && !name.to_string_lossy().contains('-') {
                     let device_path = path.join("device/vendor");
                     if let Ok(vendor) = fs::read_to_string(&device_path) {
                         if vendor.trim() == "0x1002" {
@@ -584,43 +583,6 @@ pub fn get_fan_speeds() -> Result<Vec<(u32, u32)>> {
     }
     
     Ok(fans)
-}
-
-pub fn get_fan_temperatures() -> Result<Vec<(u32, u32)>> {
-    if !TuxedoIo::is_available() {
-        return Ok(vec![]);
-    }
-    
-    let io = TuxedoIo::new()?;
-    let mut temps = Vec::new();
-    
-    for fan_id in 0..io.get_fan_count() {
-        match io.get_fan_temperature(fan_id) {
-            Ok(temp) => {
-                if temp > 0 {
-                    temps.push((fan_id, temp));
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    
-    Ok(temps)
-}
-
-pub fn get_tdp_info() -> Result<(i32, i32, i32)> {
-    if !TuxedoIo::is_available() {
-        return Err(anyhow!("TDP info not available"));
-    }
-    
-    let io = TuxedoIo::new()?;
-    
-    // Try to get TDP0 (main TDP)
-    let current = io.get_tdp(0)?;
-    let min = io.get_tdp_min(0)?;
-    let max = io.get_tdp_max(0)?;
-    
-    Ok((current, min, max))
 }
 
 pub fn get_cpu_info() -> Result<CpuInfo> {
@@ -970,7 +932,7 @@ fn read_wifi_channel(interface: &str) -> (Option<u32>, Option<u32>) {
                 if line.contains("Channel") || line.contains("Frequency") {
                     // Parse various formats
                     let parts: Vec<&str> = line.split_whitespace().collect();
-                    for (i, part) in parts.iter().enumerate() {
+                    for (_i, part) in parts.iter().enumerate() {
                         if part.contains("Channel:") || part.contains("Channel=") {
                             if let Some(ch_str) = part.split(&[':', '=']).nth(1) {
                                 if let Ok(ch) = ch_str.parse() {
@@ -989,8 +951,8 @@ fn read_wifi_channel(interface: &str) -> (Option<u32>, Option<u32>) {
 
 fn read_wifi_rates(interface: &str) -> (Option<f64>, Option<f64>) {
     // Try to read from /sys/class/net/{interface}/statistics/
-    let tx_bytes_path = format!("/sys/class/net/{}/statistics/tx_bytes", interface);
-    let rx_bytes_path = format!("/sys/class/net/{}/statistics/rx_bytes", interface);
+    let _tx_bytes_path = format!("/sys/class/net/{}/statistics/tx_bytes", interface);
+    let _rx_bytes_path = format!("/sys/class/net/{}/statistics/rx_bytes", interface);
     
     // Note: This gives total bytes, not rates. Actual rate calculation would require
     // storing previous values and time, similar to CPU load calculation.

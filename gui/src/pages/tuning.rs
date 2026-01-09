@@ -8,7 +8,26 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
     ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let profile_name = state.config.current_profile.clone();
+                ui.heading(format!("Editing Profile: {}", profile_name));
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("💾 Save").clicked() {
+                        state.config_dirty = false;
+                        let _ = state.save_config();
+
+                        if let Some(client) = dbus_client {
+                            if let Some(profile) = state.config.profiles.iter().find(|p| p.name == profile_name) {
+                                let profile_clone = profile.clone();
+                                let _ = client.apply_profile(profile_clone);
+                            }
+                        }
+                    }
+                });
+            });
+
+            ui.add_space(16.0);
             
             let profile_name = state.config.current_profile.clone();
             let profile_idx = state.config.profiles.iter()
@@ -52,25 +71,6 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, dbus_client: Option<&DbusClient>)
                 ui.add_space(16.0);
 
                 
-                // Action buttons
-                ui.horizontal(|ui| {
-                    if ui.button("💾 Save & Apply Profile").clicked() {
-                        state.config_dirty = false;
-                        let _ = state.save_config();
-                        
-                        if let Some(client) = dbus_client {
-                            let profile_clone = state.config.profiles[idx].clone();
-                            let rx = client.apply_profile(profile_clone);
-                            // Result handled in background
-                        }
-                    }
-                    
-                    if ui.button("↺ Reset to Saved").clicked() {
-                        state.load_config();
-                        state.show_message("Profile reset to saved state", false);
-                    }
-                });
-                
                 state.config_dirty = true;
             } else {
                 ui.label("No profile selected");
@@ -104,7 +104,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "auto".to_string());
             
-            ComboBox::from_id_source("governor_combo")
+            ComboBox::new("governor_combo", "")
                 .selected_text(&current_gov)
                 .show_ui(ui, |ui| {
                     for gov in &cpu_info.available_governors {
@@ -126,7 +126,7 @@ fn draw_cpu_tuning(
                 .clone()
                 .unwrap_or_else(|| "balance_performance".to_string());
             
-            ComboBox::from_id_source("epp_combo")
+            ComboBox::new("epp_combo", "")
                 .selected_text(&current_epp)
                 .show_ui(ui, |ui| {
                     for epp in &cpu_info.available_epp_options {
@@ -206,7 +206,7 @@ fn draw_keyboard_tuning(
                 _ => "Other",
             };
             
-            ComboBox::from_id_source("keyboard_mode")
+            ComboBox::new("keyboard_mode", "")
                 .selected_text(current_mode_name)
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(current_mode_name == "Single Color", "Single Color").clicked() {
