@@ -40,15 +40,6 @@ impl FanCurveEditor {
                     self.add_point();
                 }
                 
-                if ui.button("🗑️ Remove Selected").clicked() && self.selected_point.is_some() {
-                    if self.curve.points.len() > 2 {
-                        if let Some(idx) = self.selected_point {
-                            self.curve.points.remove(idx);
-                            self.selected_point = None;
-                        }
-                    }
-                }
-                
                 if ui.button("↺ Reset to Default").clicked() {
                     self.reset_to_default();
                 }
@@ -269,8 +260,8 @@ impl FanCurveEditor {
                         }
                     }
                     
-                    // Delete button (only if more than 2 points and this point is selected)
-                    if self.curve.points.len() > 2 && is_selected {
+                    // Delete button for each point (only if more than 2 points)
+                    if self.curve.points.len() > 2 {
                         if ui.small_button("🗑️").clicked() {
                             to_remove = Some(idx);
                         }
