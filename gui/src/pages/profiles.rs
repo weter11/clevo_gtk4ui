@@ -231,9 +231,5 @@ fn create_standard_profile() -> tuxedo_common::types::Profile {
             control_enabled: false,
             curves: vec![],
         },
-        auto_switch: AutoSwitchSettings {
-            enabled: false,
-            app_names: vec![],
-        },
     }
 }
