@@ -1,11 +1,12 @@
 use egui::{Ui, RichText, Color32};
-use egui_plot::{Plot, PlotPoints, Line, Points, Legend, Polygon, PlotPoint};
+use egui_plot::{Plot, PlotPoints, Line, Points, Polygon, PlotPoint};
 use tuxedo_common::types::FanCurve;
 
 pub struct FanCurveEditor {
     pub fan_id: u32,
     pub curve: FanCurve,
     selected_point: Option<usize>,
+    dragging_point: Option<usize>,
 }
 
 impl FanCurveEditor {
@@ -14,6 +15,7 @@ impl FanCurveEditor {
             fan_id,
             curve,
             selected_point: None,
+            dragging_point: None,
         }
     }
     
@@ -22,7 +24,7 @@ impl FanCurveEditor {
             ui.heading(format!("Fan {} Curve", self.fan_id));
             ui.add_space(8.0);
             
-            // Graph
+            // Graph with dragging
             self.draw_graph(ui);
             
             ui.add_space(12.0);
@@ -54,9 +56,9 @@ impl FanCurveEditor {
         });
     }
     
-    fn draw_graph(&self, ui: &mut Ui) {
-        Plot::new(format!("fan_curve_{}", self.fan_id))
-            .height(250.0)
+    fn draw_graph(&mut self, ui: &mut Ui) {
+        let plot = Plot::new(format!("fan_curve_{}", self.fan_id))
+            .height(300.0)
             .width(ui.available_width())
             .show_axes(true)
             .show_grid(true)
@@ -64,41 +66,102 @@ impl FanCurveEditor {
             .y_axis_label("Fan Speed (%)")
             .allow_zoom(false)
             .allow_drag(false)
-            .legend(Legend::default())
-            .show(ui, |plot_ui| {
-                // Draw reference zones first
-                self.draw_reference_zones(plot_ui);
+            .allow_boxed_zoom(false)
+            .allow_scroll(false)
+            .include_x(0.0)
+            .include_x(100.0)
+            .include_y(0.0)
+            .include_y(100.0)
+            .set_margin_fraction(egui::vec2(0.05, 0.05));
+        
+        let response = plot.show(ui, |plot_ui| {
+            // Draw reference zones first
+            self.draw_reference_zones(plot_ui);
+            
+            // Sort points by temperature
+            let mut sorted = self.curve.points.clone();
+            sorted.sort_by_key(|p| p.0);
+            
+            // Draw line
+            let line_points: PlotPoints = sorted
+                .iter()
+                .map(|(temp, speed)| [*temp as f64, *speed as f64])
+                .collect();
+            
+            plot_ui.line(
+                Line::new(line_points)
+                    .color(Color32::from_rgb(65, 120, 200))
+                    .width(2.0)
+            );
+            
+            // Draw and handle point interactions
+            for (idx, (temp, speed)) in self.curve.points.iter().enumerate() {
+                let point = PlotPoint::new(*temp as f64, *speed as f64);
+                let points = PlotPoints::new(vec![[*temp as f64, *speed as f64]]);
                 
-                // Sort points by temperature
-                let mut sorted = self.curve.points.clone();
-                sorted.sort_by_key(|p| p.0);
-                
-                // Draw line
-                let line_points: PlotPoints = sorted
-                    .iter()
-                    .map(|(temp, speed)| [*temp as f64, *speed as f64])
-                    .collect();
-                
-                plot_ui.line(
-                    Line::new(line_points)
-                        .color(Color32::from_rgb(65, 120, 200))
-                        .width(2.0)
-                        .name("Fan Curve")
-                );
-                
-                // Draw points
-                let points: PlotPoints = sorted
-                    .iter()
-                    .map(|(temp, speed)| [*temp as f64, *speed as f64])
-                    .collect();
+                let is_selected = self.selected_point == Some(idx);
+                let color = if is_selected {
+                    Color32::from_rgb(255, 150, 50)
+                } else {
+                    Color32::from_rgb(255, 100, 100)
+                };
                 
                 plot_ui.points(
                     Points::new(points)
-                        .color(Color32::from_rgb(255, 100, 100))
-                        .radius(6.0)
-                        .name("Control Points")
+                        .color(color)
+                        .radius(if is_selected { 8.0 } else { 6.0 })
+                        .name(format!("Point {}", idx + 1))
                 );
-            });
+            }
+            
+            // Handle dragging
+            if plot_ui.response().dragged() {
+                if let Some(pointer_pos) = plot_ui.pointer_coordinate() {
+                    // Find point near pointer
+                    if self.dragging_point.is_none() {
+                        for (idx, (temp, speed)) in self.curve.points.iter().enumerate() {
+                            let point_dist = ((pointer_pos.x - *temp as f64).powi(2) 
+                                           + (pointer_pos.y - *speed as f64).powi(2)).sqrt();
+                            
+                            if point_dist < 5.0 {
+                                self.dragging_point = Some(idx);
+                                self.selected_point = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Update dragged point
+                    if let Some(drag_idx) = self.dragging_point {
+                        let new_temp = pointer_pos.x.clamp(0.0, 100.0) as u8;
+                        let new_speed = pointer_pos.y.clamp(0.0, 100.0) as u8;
+                        self.curve.points[drag_idx] = (new_temp, new_speed);
+                    }
+                }
+            } else {
+                self.dragging_point = None;
+            }
+            
+            // Handle point selection on click
+            if plot_ui.response().clicked() {
+                if let Some(pointer_pos) = plot_ui.pointer_coordinate() {
+                    let mut closest_idx = None;
+                    let mut closest_dist = f64::INFINITY;
+                    
+                    for (idx, (temp, speed)) in self.curve.points.iter().enumerate() {
+                        let dist = ((pointer_pos.x - *temp as f64).powi(2) 
+                                  + (pointer_pos.y - *speed as f64).powi(2)).sqrt();
+                        
+                        if dist < closest_dist && dist < 8.0 {
+                            closest_dist = dist;
+                            closest_idx = Some(idx);
+                        }
+                    }
+                    
+                    self.selected_point = closest_idx;
+                }
+            }
+        });
     }
     
     fn draw_reference_zones(&self, plot_ui: &mut egui_plot::PlotUi) {
@@ -160,7 +223,6 @@ impl FanCurveEditor {
     fn draw_points_editor(&mut self, ui: &mut Ui) {
         ui.label(RichText::new("Control Points:").strong());
         
-        // FIXED: Collect changes first, then apply
         let mut changes = Vec::new();
         let mut to_remove = None;
         
@@ -169,7 +231,7 @@ impl FanCurveEditor {
             .spacing([12.0, 6.0])
             .striped(true)
             .show(ui, |ui| {
-                ui.label(RichText::new("").strong());
+                ui.label(RichText::new("#").strong());
                 ui.label(RichText::new("Temp (°C)").strong());
                 ui.label(RichText::new("Speed (%)").strong());
                 ui.label(RichText::new("Actions").strong());
@@ -178,7 +240,7 @@ impl FanCurveEditor {
                 for (idx, (temp, speed)) in self.curve.points.iter().enumerate() {
                     let is_selected = self.selected_point == Some(idx);
                     
-                    // Selection indicator
+                    // Point number with selection indicator
                     if ui.selectable_label(is_selected, format!("{}", idx + 1)).clicked() {
                         self.selected_point = Some(idx);
                     }
@@ -198,19 +260,17 @@ impl FanCurveEditor {
                         .suffix("%"))
                         .changed() 
                     {
-                        // Only update if not already in changes
                         if !changes.iter().any(|(i, _, _)| *i == idx) {
                             changes.push((idx, *temp, speed_val as u8));
                         } else {
-                            // Update existing change
                             if let Some(change) = changes.iter_mut().find(|(i, _, _)| *i == idx) {
                                 change.2 = speed_val as u8;
                             }
                         }
                     }
                     
-                    // Delete button
-                    if self.curve.points.len() > 2 {
+                    // Delete button (only if more than 2 points and this point is selected)
+                    if self.curve.points.len() > 2 && is_selected {
                         if ui.small_button("🗑️").clicked() {
                             to_remove = Some(idx);
                         }
@@ -222,7 +282,7 @@ impl FanCurveEditor {
                 }
             });
         
-        // Apply changes outside the iteration
+        // Apply changes
         for (idx, temp, speed) in changes {
             self.curve.points[idx] = (temp, speed);
         }
@@ -230,15 +290,19 @@ impl FanCurveEditor {
         // Handle removal
         if let Some(idx) = to_remove {
             self.curve.points.remove(idx);
-            if self.selected_point == Some(idx) {
-                self.selected_point = None;
-            }
+            self.selected_point = None;
         }
         
         ui.add_space(6.0);
         ui.label(RichText::new(format!("Total points: {} (min: 2, max: 16)", self.curve.points.len()))
             .small()
             .italics());
+        
+        if self.selected_point.is_some() {
+            ui.label(RichText::new("💡 Tip: Click and drag points on the graph to adjust them")
+                .small()
+                .italics());
+        }
     }
     
     fn add_point(&mut self) {
@@ -246,7 +310,6 @@ impl FanCurveEditor {
             return;
         }
         
-        // Find gap in temperature range
         let mut sorted = self.curve.points.clone();
         sorted.sort_by_key(|p| p.0);
         
@@ -267,7 +330,6 @@ impl FanCurveEditor {
             }
         }
         
-        // Check gaps at start and end
         if sorted[0].0 > best_gap_size {
             best_gap_temp = sorted[0].0 / 2;
         }
@@ -278,9 +340,11 @@ impl FanCurveEditor {
             }
         }
         
-        // Interpolate speed
         let speed = self.interpolate_speed(best_gap_temp);
         self.curve.points.push((best_gap_temp, speed));
+        
+        // Select the new point
+        self.selected_point = Some(self.curve.points.len() - 1);
     }
     
     fn interpolate_speed(&self, temp: u8) -> u8 {
@@ -326,6 +390,7 @@ impl FanCurveEditor {
             (85, 100),
         ];
         self.selected_point = None;
+        self.dragging_point = None;
     }
     
     pub fn get_curve(&self) -> FanCurve {
