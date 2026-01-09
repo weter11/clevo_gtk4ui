@@ -130,7 +130,6 @@ pub struct Profile {
     pub keyboard_settings: KeyboardSettings,
     pub screen_settings: ScreenSettings,
     pub fan_settings: FanSettings,
-    pub auto_switch: AutoSwitchSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,12 +192,6 @@ pub struct BatterySettings {
 pub struct FanCurve {
     pub fan_id: u32,
     pub points: Vec<(u8, u8)>, // (temperature, speed) - 8 points
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoSwitchSettings {
-    pub enabled: bool,
-    pub app_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
