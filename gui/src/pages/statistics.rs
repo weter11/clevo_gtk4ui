@@ -571,10 +571,11 @@ fn draw_fan_info(ui: &mut Ui, state: &AppState) {
 }
 
 fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
-    use std::ffi::CString;
-    use std::mem::MaybeUninit;
+    use systemstat::{System, Platform};
     
-    // Try multiple methods to find mount point
+    let sys = System::new();
+    
+    // Try to get mount point for this device
     let mount_point = if let Ok(output) = std::process::Command::new("findmnt")
         .args(&["-n", "-o", "TARGET", "--source", device])
         .output()
@@ -593,10 +594,10 @@ fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
         None
     };
     
-    // If findmnt didn't work, try to match by major:minor numbers or common paths
+    // If findmnt didn't work, try to match by checking common paths
     let mount_point = mount_point.or_else(|| {
         // Check common mount points
-        for path in &["/", "/home", "/boot"] {
+        for path in &["/", "/home", "/boot", "/mnt", "/media"] {
             if let Ok(output) = std::process::Command::new("df")
                 .args(&[path])
                 .output()
@@ -613,20 +614,17 @@ fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
     });
     
     let mount_point = mount_point.ok_or_else(|| 
-        std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point")
+        std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point found")
     )?;
     
-    // Use statvfs to get space info
-    let path = CString::new(mount_point.as_str())?;
-    let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
-    
-    unsafe {
-        if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) == 0 {
-            let stat = stat.assume_init();
-            let free_bytes = stat.f_bavail * stat.f_bsize;
+    // Use systemstat to get filesystem info
+    match sys.mount_at(&mount_point) {
+        Ok(mount) => {
+            let free_bytes = mount.avail.as_u64();
             Ok(free_bytes / 1_000_000_000)
-        } else {
-            Err(std::io::Error::last_os_error())
+        }
+        Err(e) => {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("systemstat error: {}", e)))
         }
     }
 }
