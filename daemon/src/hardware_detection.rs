@@ -100,6 +100,24 @@ fn calculate_cpu_load() -> Result<HashMap<u32, f32>> {
     Ok(loads)
 }
 
+// Scheduler detection
+fn get_scheduler_info() -> (String, Vec<String>) {
+    let scheduler = fs::read_to_string("/sys/kernel/debug/sched/features")
+        .or_else(|_| fs::read_to_string("/proc/sys/kernel/sched_features"))
+        .ok()
+        .and_then(|content| {
+            if content.contains("EEVDF") {
+                Some("EEVDF".to_string())
+            } else {
+                Some("CFS".to_string())
+            }
+        })
+        .unwrap_or_else(|| "CFS".to_string());
+    
+    let available = vec!["CFS".to_string(), "EEVDF".to_string()];
+    (scheduler, available)
+}
+
 fn get_cpu_name() -> Result<String> {
     let cpuinfo = fs::read_to_string("/proc/cpuinfo")?;
     for line in cpuinfo.lines() {
@@ -649,7 +667,6 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
     let median_load = if !loads_vec.is_empty() {
         let mut sorted = loads_vec.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        // Calculate true median: middle value for odd length, average of two middle for even
         if sorted.len() % 2 == 0 {
             let mid = sorted.len() / 2;
             (sorted[mid - 1] + sorted[mid]) / 2.0
@@ -733,6 +750,8 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
         .cloned()
         .map(|s| s.name);
 
+    let (scheduler, available_schedulers) = get_scheduler_info();
+
     Ok(CpuInfo {
         name,
         median_frequency,
@@ -755,6 +774,8 @@ pub fn get_cpu_info() -> Result<CpuInfo> {
         energy_performance_preference,
         available_epp_options,
         capabilities,
+        scheduler,
+        available_schedulers,
     })
 }
 
@@ -796,9 +817,9 @@ pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
         if let Ok(vendor) = fs::read_to_string(&vendor_path) {
             let vendor = vendor.trim();
             let name = match vendor {
-                "0x1002" => "AMD GPU".to_string(),
-                "0x10de" => "NVIDIA GPU".to_string(),
-                "0x8086" => "Intel GPU".to_string(),
+                "0x1002" => format!("AMD GPU {}", i),
+                "0x10de" => format!("NVIDIA GPU {}", i),
+                "0x8086" => format!("Intel GPU {}", i),
                 _ => format!("GPU {}", i),
             };
             
@@ -814,15 +835,30 @@ pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
                 .trim()
                 .to_string();
             
+            // Read frequency
+            let frequency = read_gpu_frequency(&device_path);
+            
+            // Read temperature
+            let temperature = read_gpu_temperature(&device_path);
+            
+            // Read load
+            let load = read_gpu_load(&device_path);
+            
+            // Read power
+            let power = read_gpu_power(&device_path);
+            
+            // Read voltage (optional)
+            let voltage = read_gpu_voltage(&device_path);
+            
             gpus.push(GpuInfo {
                 name,
                 gpu_type,
                 status,
-                frequency: None,      // ADD
-                temperature: None,    // ADD
-                load: None,           // ADD
-                power: None,          // ADD
-                voltage: None,        // ADD
+                frequency,
+                temperature,
+                load,
+                power,
+                voltage,
             });
         }
     }
@@ -832,6 +868,112 @@ pub fn get_gpu_info() -> Result<Vec<GpuInfo>> {
     }
     
     Ok(gpus)
+}
+
+fn read_gpu_frequency(device_path: &str) -> Option<u64> {
+    // AMD
+    if let Ok(freq_str) = fs::read_to_string(format!("{}/pp_dpm_sclk", device_path)) {
+        for line in freq_str.lines() {
+            if line.contains('*') {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(freq) = parts[1].trim_end_matches("Mhz").parse::<u64>() {
+                        return Some(freq);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Intel
+    if let Ok(freq_str) = fs::read_to_string(format!("{}/gt_cur_freq_mhz", device_path)) {
+        if let Ok(freq) = freq_str.trim().parse::<u64>() {
+            return Some(freq);
+        }
+    }
+    
+    None
+}
+
+fn read_gpu_temperature(device_path: &str) -> Option<f32> {
+    // Check hwmon
+    let hwmon_path = format!("{}/hwmon", device_path);
+    if let Ok(entries) = fs::read_dir(&hwmon_path) {
+        for entry in entries.flatten() {
+            let temp_input = entry.path().join("temp1_input");
+            if let Ok(temp_str) = fs::read_to_string(&temp_input) {
+                if let Ok(temp) = temp_str.trim().parse::<f32>() {
+                    return Some(temp / 1000.0);
+                }
+            }
+        }
+    }
+    
+    // AMD specific
+    if let Ok(temp_str) = fs::read_to_string(format!("{}/gpu_busy_percent", device_path)) {
+        if let Ok(temp) = temp_str.trim().parse::<f32>() {
+            return Some(temp);
+        }
+    }
+    
+    None
+}
+
+fn read_gpu_load(device_path: &str) -> Option<f32> {
+    // AMD
+    if let Ok(load_str) = fs::read_to_string(format!("{}/gpu_busy_percent", device_path)) {
+        if let Ok(load) = load_str.trim().parse::<f32>() {
+            return Some(load);
+        }
+    }
+    
+    // Intel
+    if let Ok(load_str) = fs::read_to_string(format!("{}/gt_RP0_freq_mhz", device_path)) {
+        // Intel doesn't directly expose load, would need calculation
+    }
+    
+    None
+}
+
+fn read_gpu_power(device_path: &str) -> Option<f32> {
+    let hwmon_path = format!("{}/hwmon", device_path);
+    if let Ok(entries) = fs::read_dir(&hwmon_path) {
+        for entry in entries.flatten() {
+            // Try power1_average first
+            let power_avg = entry.path().join("power1_average");
+            if let Ok(power_str) = fs::read_to_string(&power_avg) {
+                if let Ok(microwatts) = power_str.trim().parse::<f32>() {
+                    return Some(microwatts / 1_000_000.0);
+                }
+            }
+            
+            // Try power1_input
+            let power_input = entry.path().join("power1_input");
+            if let Ok(power_str) = fs::read_to_string(&power_input) {
+                if let Ok(microwatts) = power_str.trim().parse::<f32>() {
+                    return Some(microwatts / 1_000_000.0);
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+fn read_gpu_voltage(device_path: &str) -> Option<f32> {
+    let hwmon_path = format!("{}/hwmon", device_path);
+    if let Ok(entries) = fs::read_dir(&hwmon_path) {
+        for entry in entries.flatten() {
+            let voltage_input = entry.path().join("in0_input");
+            if let Ok(volt_str) = fs::read_to_string(&voltage_input) {
+                if let Ok(millivolts) = volt_str.trim().parse::<f32>() {
+                    return Some(millivolts / 1000.0);
+                }
+            }
+        }
+    }
+    
+    None
 }
 
 // WiFi information detection
