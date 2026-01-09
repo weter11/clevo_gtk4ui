@@ -574,24 +574,50 @@ fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
     use std::ffi::CString;
     use std::mem::MaybeUninit;
     
-    // Try to find mount point for this device
-    let output = std::process::Command::new("findmnt")
+    // Try multiple methods to find mount point
+    let mount_point = if let Ok(output) = std::process::Command::new("findmnt")
         .args(&["-n", "-o", "TARGET", "--source", device])
-        .output()?;
+        .output()
+    {
+        if output.status.success() {
+            let mp = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !mp.is_empty() {
+                Some(mp)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     
-    if !output.status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Not mounted"));
-    }
+    // If findmnt didn't work, try to match by major:minor numbers or common paths
+    let mount_point = mount_point.or_else(|| {
+        // Check common mount points
+        for path in &["/", "/home", "/boot"] {
+            if let Ok(output) = std::process::Command::new("df")
+                .args(&[path])
+                .output()
+            {
+                if output.status.success() {
+                    let output_str = String::from_utf8_lossy(&output.stdout);
+                    if output_str.contains(device) {
+                        return Some(path.to_string());
+                    }
+                }
+            }
+        }
+        None
+    });
     
-    let mount_point = String::from_utf8_lossy(&output.stdout);
-    let mount_point = mount_point.trim();
-    
-    if mount_point.is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point"));
-    }
+    let mount_point = mount_point.ok_or_else(|| 
+        std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point")
+    )?;
     
     // Use statvfs to get space info
-    let path = CString::new(mount_point)?;
+    let path = CString::new(mount_point.as_str())?;
     let mut stat: MaybeUninit<libc::statvfs> = MaybeUninit::uninit();
     
     unsafe {
