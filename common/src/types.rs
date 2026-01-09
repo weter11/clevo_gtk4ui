@@ -208,13 +208,20 @@ pub struct AppConfig {
     pub autostart: bool,
     pub fan_daemon_enabled: bool,
     pub app_monitoring_enabled: bool,
-    pub auto_profile_switching: bool,  // Automatic profile switching based on running applications
     pub cpu_scheduler: String,
+    pub font_size: FontSize,
     pub statistics_sections: StatisticsSections,
     pub tuning_section_order: Vec<String>,
     pub profiles: Vec<Profile>,
     pub current_profile: String,
     pub battery_settings: BatterySettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FontSize {
+    Small,
+    Medium,
+    Large,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -235,7 +242,6 @@ pub struct StatisticsSections {
     pub show_fans: bool,
     pub section_order: Vec<String>,
     // Polling rates in milliseconds
-    pub system_info_poll_rate: u64,
     pub cpu_poll_rate: u64,
     pub gpu_poll_rate: u64,
     pub battery_poll_rate: u64,
@@ -252,8 +258,8 @@ impl Default for AppConfig {
             autostart: false,
             fan_daemon_enabled: true,
             app_monitoring_enabled: true,
-            auto_profile_switching: false,  // Default: disabled
             cpu_scheduler: "CFS".to_string(),
+            font_size: FontSize::Medium,
             statistics_sections: StatisticsSections::default(),
             tuning_section_order: vec![
                 "Keyboard".to_string(),
@@ -263,7 +269,7 @@ impl Default for AppConfig {
                 "Fans".to_string(),
             ],
             profiles: vec![Profile::default()],
-            current_profile: "Default".to_string(),
+            current_profile: "Standard".to_string(),
             battery_settings: BatterySettings::default(),
         }
     }
@@ -298,7 +304,6 @@ impl Default for StatisticsSections {
                 "Storage".to_string(),
                 "Fans".to_string(),
             ],
-            system_info_poll_rate: 60000,  // 60 seconds - rarely changes
             cpu_poll_rate: 1000,            // 1 second
             gpu_poll_rate: 2000,            // 2 seconds
             battery_poll_rate: 5000,        // 5 seconds
@@ -312,14 +317,13 @@ impl Default for StatisticsSections {
 impl Default for Profile {
     fn default() -> Self {
         Self {
-            name: "Default".to_string(),
+            name: "Standard".to_string(),
             is_default: true,
             cpu_settings: CpuSettings::default(),
             gpu_settings: GpuSettings::default(),
             keyboard_settings: KeyboardSettings::default(),
             screen_settings: ScreenSettings::default(),
             fan_settings: FanSettings::default(),
-            auto_switch: AutoSwitchSettings::default(),
         }
     }
 }
@@ -375,15 +379,6 @@ impl Default for FanSettings {
         Self {
             control_enabled: false,
             curves: vec![],
-        }
-    }
-}
-
-impl Default for AutoSwitchSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            app_names: vec![],
         }
     }
 }
