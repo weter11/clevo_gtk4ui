@@ -71,20 +71,11 @@ impl AppState {
         }
     }
     
-    pub fn load_config(&mut self) {
-        if let Ok(mut config) = load_config_from_disk() {
-            // Rename "Default" to "Standard" if found
-            for profile in &mut config.profiles {
-                if profile.name == "Default" {
-                    profile.name = "Standard".to_string();
-                }
-            }
-            if config.current_profile == "Default" {
-                config.current_profile = "Standard".to_string();
-            }
-            self.config = config;
-        }
+pub fn load_config(&mut self) {
+    if let Ok(config) = load_config_from_disk() {
+        self.config = config;
     }
+}
     
     pub fn save_config(&mut self) -> anyhow::Result<()> {
         save_config_to_disk(&self.config)?;
