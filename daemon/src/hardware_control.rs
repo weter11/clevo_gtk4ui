@@ -26,24 +26,41 @@ pub fn set_cpu_governor(governor: &str) -> Result<()> {
 }
 
 pub fn set_cpu_frequency_limits(min_freq: u64, max_freq: u64) -> Result<()> {
-    let min_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq";
-    let max_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq";
-    
-    if !Path::new(min_path).exists() || !Path::new(max_path).exists() {
-        return Err(anyhow!("Frequency control not available (check AMD pstate status)"));
-    }
-    
     let cpu_count = get_cpu_count()?;
+    
+    // IMPORTANT: Set max first, then min to avoid conflicts
+    // If current min > new max, setting max first will fail
+    // If current max < new min, setting min first will fail
+    
+    // First, read current values
+    let current_min = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(min_freq);
+    
+    let current_max = fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(max_freq);
     
     for i in 0..cpu_count {
         let min_path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_min_freq", i);
         let max_path = format!("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_max_freq", i);
         
-        fs::write(&min_path, min_freq.to_string())
-            .map_err(|e| anyhow!("Failed to set min frequency for CPU {}: {}", i, e))?;
-        
-        fs::write(&max_path, max_freq.to_string())
-            .map_err(|e| anyhow!("Failed to set max frequency for CPU {}: {}", i, e))?;
+        // Determine order based on current vs new values
+        if max_freq < current_max || min_freq > current_min {
+            // Set max first
+            fs::write(&max_path, max_freq.to_string())
+                .map_err(|e| anyhow!("Failed to set max frequency for CPU {}: {}", i, e))?;
+            fs::write(&min_path, min_freq.to_string())
+                .map_err(|e| anyhow!("Failed to set min frequency for CPU {}: {}", i, e))?;
+        } else {
+            // Set min first
+            fs::write(&min_path, min_freq.to_string())
+                .map_err(|e| anyhow!("Failed to set min frequency for CPU {}: {}", i, e))?;
+            fs::write(&max_path, max_freq.to_string())
+                .map_err(|e| anyhow!("Failed to set max frequency for CPU {}: {}", i, e))?;
+        }
     }
     
     log::info!("Set CPU frequency limits: {} - {} kHz", min_freq, max_freq);
@@ -51,6 +68,7 @@ pub fn set_cpu_frequency_limits(min_freq: u64, max_freq: u64) -> Result<()> {
 }
 
 pub fn set_cpu_boost(enabled: bool) -> Result<()> {
+    // AMD cpufreq boost
     let amd_path = "/sys/devices/system/cpu/cpufreq/boost";
     if Path::new(amd_path).exists() {
         fs::write(amd_path, if enabled { "1" } else { "0" })?;
@@ -58,10 +76,19 @@ pub fn set_cpu_boost(enabled: bool) -> Result<()> {
         return Ok(());
     }
     
+    // Intel turbo
     let intel_path = "/sys/devices/system/cpu/intel_pstate/no_turbo";
     if Path::new(intel_path).exists() {
         fs::write(intel_path, if enabled { "0" } else { "1" })?;
         log::info!("Set Intel CPU turbo to: {}", enabled);
+        return Ok(());
+    }
+    
+    // AMD P-State boost (if using amd-pstate driver)
+    let amd_pstate_boost = "/sys/devices/system/cpu/amd_pstate/cpb_boost";
+    if Path::new(amd_pstate_boost).exists() {
+        fs::write(amd_pstate_boost, if enabled { "1" } else { "0" })?;
+        log::info!("Set AMD P-State boost to: {}", enabled);
         return Ok(());
     }
     
@@ -259,12 +286,14 @@ pub fn preview_keyboard_settings(settings: &KeyboardSettings) -> Result<()> {
 
 fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
     if settings.system_control {
+        log::info!("Using system screen brightness control");
         return Ok(());
     }
     
     let backlight_paths = [
         "/sys/class/backlight/intel_backlight",
         "/sys/class/backlight/amdgpu_bl0",
+        "/sys/class/backlight/amdgpu_bl1",
         "/sys/class/backlight/acpi_video0",
     ];
     
@@ -273,21 +302,36 @@ fn apply_screen_settings(settings: &ScreenSettings) -> Result<()> {
         let max_brightness_path = format!("{}/max_brightness", base_path);
         
         if Path::new(&brightness_path).exists() {
-            let max_brightness: u32 = fs::read_to_string(&max_brightness_path)?
-                .trim()
-                .parse()
+            let max_brightness: u32 = fs::read_to_string(&max_brightness_path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(255);
             
             let actual_brightness = ((settings.brightness as u32) * max_brightness) / 100;
-            fs::write(&brightness_path, actual_brightness.to_string())?;
             
-            log::info!("Set screen brightness to {}%", settings.brightness);
-            return Ok(());
+            // Write to actual_brightness first (this is writable)
+            let actual_path = format!("{}/actual_brightness", base_path);
+            if Path::new(&actual_path).exists() {
+                if let Err(e) = fs::write(&actual_path, actual_brightness.to_string()) {
+                    log::warn!("Could not write to actual_brightness: {}", e);
+                }
+            }
+            
+            // Then write to brightness
+            match fs::write(&brightness_path, actual_brightness.to_string()) {
+                Ok(_) => {
+                    log::info!("Set screen brightness to {}% at {}", settings.brightness, base_path);
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("Failed to set brightness at {}: {}", base_path, e);
+                    continue;
+                }
+            }
         }
     }
     
-    log::warn!("No backlight control found");
-    Ok(())
+    Err(anyhow!("No writable backlight control found"))
 }
 
 pub fn set_tdp_profile(profile_name: &str) -> Result<()> {
