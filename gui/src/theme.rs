@@ -30,30 +30,56 @@ impl TuxedoTheme {
         style.interaction.resize_grab_radius_side = 6.0;
         style.interaction.resize_grab_radius_corner = 8.0;
         
-        // Text styles
-        let mut text_styles = std::collections::BTreeMap::new();
+        ctx.set_style(style);
+    }
+
+        pub fn apply_with_font_size(&self, ctx: &Context, font_size: &tuxedo_common::types::FontSize) {
+        use tuxedo_common::types::FontSize;
         
+        let mut style = Style::default();
+        style.visuals = self.visuals.clone();
+        
+        // Spacing
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        style.spacing.indent = 20.0;
+        style.spacing.window_margin = egui::Margin::same(12.0);
+        style.spacing.menu_margin = egui::Margin::same(8.0);
+        
+        // Interaction
+        style.interaction.resize_grab_radius_side = 6.0;
+        style.interaction.resize_grab_radius_corner = 8.0;
+        
+        // Text styles with font size
+        let (heading, body, button, small, mono) = match font_size {
+            FontSize::Small => (18.0, 12.0, 12.0, 9.0, 11.0),
+            FontSize::Medium => (22.0, 14.0, 14.0, 11.0, 13.0),
+            FontSize::Large => (26.0, 16.0, 16.0, 13.0, 15.0),
+        };
+        
+        let mut text_styles = std::collections::BTreeMap::new();
         text_styles.insert(
             TextStyle::Heading,
-            FontId::new(22.0, FontFamily::Proportional),
+            FontId::new(heading, FontFamily::Proportional),
         );
         text_styles.insert(
             TextStyle::Body,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(body, FontFamily::Proportional),
         );
         text_styles.insert(
             TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
+            FontId::new(mono, FontFamily::Monospace),
         );
         text_styles.insert(
             TextStyle::Button,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(button, FontFamily::Proportional),
         );
         text_styles.insert(
             TextStyle::Small,
-            FontId::new(11.0, FontFamily::Proportional),
+            FontId::new(small, FontFamily::Proportional),
         );
         
+        style.text_styles = text_styles;
         ctx.set_style(style);
     }
     
