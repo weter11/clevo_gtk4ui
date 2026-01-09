@@ -379,10 +379,6 @@ fn create_default_profile_for_reset(is_standard: bool) -> Profile {
                 control_enabled: false,
                 curves: vec![],
             },
-            auto_switch: AutoSwitchSettings {
-                enabled: false,
-                app_names: vec![],
-            },
         }
     } else {
         Profile::default()
