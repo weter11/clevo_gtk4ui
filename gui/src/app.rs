@@ -162,6 +162,15 @@ impl TuxedoApp {
         if let Some(ref client) = dbus_client {
             start_background_polling(client.clone(), hw_update_tx.clone(), &state.config);
 
+            // Initial system info load
+            let client_clone = client.clone();
+            let tx_clone = hw_update_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(Ok(info)) = client_clone.get_system_info().await {
+                    let _ = tx_clone.send(HardwareUpdate::SystemInfo(info));
+                }
+            });
+
             // Fetch available thresholds
             let client_clone = client.clone();
             tokio::spawn(async move {
@@ -316,9 +325,7 @@ impl eframe::App for TuxedoApp {
         });
         
         // Request repaint if there are pending updates
-        if self.hw_update_rx.try_recv().is_ok() {
-            ctx.request_repaint();
-        }
+        ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 

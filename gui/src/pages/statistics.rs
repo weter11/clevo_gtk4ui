@@ -35,9 +35,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState) {
             }
 
             if state.config.statistics_sections.show_storage {
-                draw_storage_device_info(ui, state);
-                ui.add_space(12.0);
-                draw_mount_info(ui, state);
+                draw_storage_info(ui, state);
                 ui.add_space(12.0);
             }
             
@@ -398,12 +396,10 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                                         Color32::from_rgb(255, 100, 80)
                                     };
                                     
-                                    ui.add(
-                                        ProgressBar::new(signal_percent)
-                                            .text(format!("{} dBm", signal))
-                                            .fill(color)
-                                            .desired_width(150.0)
-                                    );
+                                    let progress_bar = ProgressBar::new(signal_percent)
+                                        .text(RichText::new(format!("{} dBm", signal)).color(Color32::BLACK))
+                                        .fill(color);
+                                    ui.add(progress_bar);
                                 });
                                 ui.end_row();
                             }
@@ -414,7 +410,7 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
                                     ui.label(format!("{}", channel));
                                     
                                     if let Some(width) = wifi.channel_width {
-                                        ui.label(RichText::new(format!("({} MHz)", width))
+                                        ui.label(RichText::new(format!(" ({} MHz)", width))
                                             .small()
                                             .italics());
                                     }
@@ -454,25 +450,26 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
         });
 }
 
-fn draw_storage_device_info(ui: &mut Ui, state: &AppState) {
-    CollapsingHeader::new(RichText::new("💾 Storage Devices").heading())
+fn draw_storage_info(ui: &mut Ui, state: &AppState) {
+    CollapsingHeader::new(RichText::new("💾 Storage").heading())
         .default_open(true)
         .show(ui, |ui| {
             if !state.storage_device_info.is_empty() {
-                Grid::new("device_grid")
-                    .num_columns(2)
-                    .spacing([40.0, 8.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for device in &state.storage_device_info {
-                            ui.label(RichText::new(&device.model).strong());
-                            ui.label(format!("{} GB", device.size_gb));
-                            ui.end_row();
-                            
+                for device in &state.storage_device_info {
+                    ui.label(RichText::new(&device.model).strong());
+                    Grid::new(format!("storage_device_grid_{}", device.device))
+                        .num_columns(2)
+                        .spacing([40.0, 8.0])
+                        .striped(true)
+                        .show(ui, |ui| {
                             ui.label("Device:");
                             ui.label(RichText::new(&device.device).monospace());
                             ui.end_row();
-                            
+
+                            ui.label("Size:");
+                            ui.label(format!("{:.1} GB", device.size_gb));
+                            ui.end_row();
+
                             if let Some(temp) = device.temperature {
                                 ui.label("Temperature:");
                                 ui.colored_label(
@@ -481,26 +478,23 @@ fn draw_storage_device_info(ui: &mut Ui, state: &AppState) {
                                 );
                                 ui.end_row();
                             }
-                        }
-                    });
+                        });
+                    ui.add_space(8.0);
+                }
             } else {
                 ui.label("No storage devices detected");
             }
-        });
-}
 
-fn draw_mount_info(ui: &mut Ui, state: &AppState) {
-    CollapsingHeader::new(RichText::new("🖴 Mounts").heading())
-        .default_open(true)
-        .show(ui, |ui| {
             if !state.mount_info.is_empty() {
-                Grid::new("mount_grid")
-                    .num_columns(2)
-                    .spacing([40.0, 8.0])
-                    .striped(true)
-                    .show(ui, |ui| {
-                        for mount in &state.mount_info {
-                            ui.label(RichText::new(&mount.mount_point).strong());
+                ui.separator();
+                for mount in &state.mount_info {
+                    ui.label(RichText::new(&mount.mount_point).strong());
+                    Grid::new(format!("mount_grid_{}", mount.mount_point))
+                        .num_columns(2)
+                        .spacing([40.0, 8.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label("Usage:");
                             ui.horizontal(|ui| {
                                 ui.add(
                                     ProgressBar::new(mount.used_percent as f32 / 100.0)
@@ -509,18 +503,17 @@ fn draw_mount_info(ui: &mut Ui, state: &AppState) {
                                 );
                             });
                             ui.end_row();
-                            
-                            ui.label("Usage:");
-                            ui.label(format!("{} GB / {} GB", mount.used_gb, mount.total_gb));
+
+                            ui.label("Free Space:");
+                            ui.label(format!("{:.1} GB", mount.total_gb as f64 - mount.used_gb as f64));
                             ui.end_row();
 
                             ui.label("Filesystem:");
                             ui.label(&mount.filesystem_type);
                             ui.end_row();
-                        }
-                    });
-            } else {
-                ui.label("No mounts detected");
+                        });
+                    ui.add_space(8.0);
+                }
             }
         });
 }

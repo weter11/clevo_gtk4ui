@@ -1191,7 +1191,7 @@ pub fn get_mount_info() -> Result<Vec<MountInfo>> {
     let mut mounts_info = Vec::new();
 
     if let Ok(mounts) = sys.mounts() {
-        for mount in mounts.iter() {
+        for mount in mounts.iter().filter(|m| m.fs_mounted_on == "/" || m.fs_mounted_on == "/home") {
             let total = mount.total.as_u64();
             let avail = mount.avail.as_u64();
             let used = total - avail;
