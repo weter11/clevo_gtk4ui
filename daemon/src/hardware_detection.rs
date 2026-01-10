@@ -4,6 +4,7 @@ use std::path::Path;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use crate::tuxedo_io::TuxedoIo;
+use systemstat::{System, Platform, saturating_sub_bytes};
 // use tuxedo_io::TuxedoIo;
 use tuxedo_common::types::*;
 
@@ -1162,4 +1163,113 @@ fn read_wifi_rates(interface: &str) -> (Option<f64>, Option<f64>) {
     }
     
     (None, None)
+}
+
+pub fn get_battery_info() -> Result<BatteryInfo> {
+    let base = if Path::new("/sys/class/power_supply/BAT0").exists() {
+        "/sys/class/power_supply/BAT0"
+    } else if Path::new("/sys/class/power_supply/BAT1").exists() {
+        "/sys/class/power_supply/BAT1"
+    } else {
+        return Err(anyhow!("No battery found"));
+    };
+
+    Ok(BatteryInfo {
+        voltage_mv: read_sysfs_u64(&format!("{}/voltage_now", base))? / 1000,
+        current_ma: read_sysfs_i64(&format!("{}/current_now", base))? / 1000,
+        charge_percent: read_sysfs_u64(&format!("{}/capacity", base))?,
+        capacity_mah: read_sysfs_u64(&format!("{}/charge_full", base))? / 1000,
+        manufacturer: read_sysfs_string(&format!("{}/manufacturer", base))?,
+        model: read_sysfs_string(&format!("{}/model_name", base))?,
+        charge_start_threshold: read_sysfs_u64(&format!("{}/charge_control_start_threshold", base)).ok().map(|v| v as u8),
+        charge_end_threshold: read_sysfs_u64(&format!("{}/charge_control_end_threshold", base)).ok().map(|v| v as u8),
+    })
+}
+
+pub fn get_mount_info() -> Result<Vec<MountInfo>> {
+    let sys = System::new();
+    let mut mounts_info = Vec::new();
+
+    if let Ok(mounts) = sys.mounts() {
+        for mount in mounts.iter() {
+            let total = mount.total.as_u64();
+            let avail = mount.avail.as_u64();
+            let used = total - avail;
+            let used_percent = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
+
+            mounts_info.push(MountInfo {
+                mount_point: mount.fs_mounted_on.clone(),
+                filesystem_type: mount.fs_type.clone(),
+                total_gb: total / 1_000_000_000,
+                used_gb: used / 1_000_000_000,
+                used_percent,
+            });
+        }
+    }
+
+    Ok(mounts_info)
+}
+
+fn read_sysfs_u64(path: &str) -> Result<u64> {
+    Ok(fs::read_to_string(path)?.trim().parse()?)
+}
+
+fn read_sysfs_i64(path: &str) -> Result<i64> {
+    Ok(fs::read_to_string(path)?.trim().parse()?)
+}
+
+fn read_sysfs_string(path: &str) -> Result<String> {
+    Ok(fs::read_to_string(path)?.trim().to_string())
+}
+
+pub fn get_storage_device_info() -> Result<Vec<StorageDevice>> {
+    let mut storage_devices = Vec::new();
+
+    for entry in std::fs::read_dir("/sys/block")? {
+        let entry = entry?;
+        let dev_name = entry.file_name().to_string_lossy().to_string();
+
+        if dev_name.starts_with("loop") || dev_name.starts_with("ram") {
+            continue;
+        }
+
+        let path = entry.path();
+        let model = std::fs::read_to_string(path.join("device/model"))
+            .unwrap_or_else(|_| dev_name.clone())
+            .trim()
+            .to_string();
+
+        let size_gb = if let Ok(size_str) = std::fs::read_to_string(path.join("size")) {
+            if let Ok(sectors) = size_str.trim().parse::<u64>() {
+                (sectors * 512) / 1_000_000_000
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Try to read temperature from hwmon
+        let mut temperature = None;
+        if let Ok(hwmon_entries) = std::fs::read_dir(path.join("device/hwmon")) {
+            for hwmon_entry in hwmon_entries.flatten() {
+                let temp_input = hwmon_entry.path().join("temp1_input");
+                if let Ok(temp_str) = std::fs::read_to_string(&temp_input) {
+                    if let Ok(temp_millidegrees) = temp_str.trim().parse::<i32>() {
+                        temperature = Some(temp_millidegrees as f32 / 1000.0);
+                        break;
+                    }
+                }
+            }
+        }
+
+        storage_devices.push(StorageDevice {
+            device: format!("/dev/{}", dev_name),
+            model,
+            size_gb,
+            temperature,
+        });
+    }
+
+    Ok(storage_devices)
 }

@@ -35,7 +35,9 @@ pub fn draw(ui: &mut Ui, state: &mut AppState) {
             }
 
             if state.config.statistics_sections.show_storage {
-                draw_storage_info(ui, state);
+                draw_storage_device_info(ui, state);
+                ui.add_space(12.0);
+                draw_mount_info(ui, state);
                 ui.add_space(12.0);
             }
             
@@ -452,51 +454,26 @@ fn draw_wifi_info(ui: &mut Ui, state: &AppState) {
         });
 }
 
-fn draw_storage_info(ui: &mut Ui, state: &AppState) {
-    CollapsingHeader::new(RichText::new("💾 Storage").heading())
-        .default_open(true)  // Changed to true
+fn draw_storage_device_info(ui: &mut Ui, state: &AppState) {
+    CollapsingHeader::new(RichText::new("💾 Storage Devices").heading())
+        .default_open(true)
         .show(ui, |ui| {
-            if !state.storage_info.is_empty() {
-                Grid::new("storage_grid")
+            if !state.storage_device_info.is_empty() {
+                Grid::new("device_grid")
                     .num_columns(2)
                     .spacing([40.0, 8.0])
                     .striped(true)
                     .show(ui, |ui| {
-                        for storage in &state.storage_info {
-                            ui.label(RichText::new(&storage.model).strong());
-                            ui.label(format!("{} GB total", storage.size_gb));
+                        for device in &state.storage_device_info {
+                            ui.label(RichText::new(&device.model).strong());
+                            ui.label(format!("{} GB", device.size_gb));
                             ui.end_row();
                             
                             ui.label("Device:");
-                            ui.label(RichText::new(&storage.device).monospace());
+                            ui.label(RichText::new(&device.device).monospace());
                             ui.end_row();
                             
-                            // Try to get free space using statvfs
-                            if let Ok(free_gb) = get_free_space(&storage.device) {
-                                let used_gb = storage.size_gb.saturating_sub(free_gb);
-                                let used_percent = if storage.size_gb > 0 {
-                                    (used_gb as f32 / storage.size_gb as f32) * 100.0
-                                } else {
-                                    0.0
-                                };
-                                
-                                ui.label("Usage:");
-                                ui.horizontal(|ui| {
-                                    ui.add(
-                                        ProgressBar::new(used_percent / 100.0)
-                                            .text(format!("{} GB / {} GB ({:.1}%)", 
-                                                used_gb, storage.size_gb, used_percent))
-                                            .desired_width(200.0)
-                                    );
-                                });
-                                ui.end_row();
-                                
-                                ui.label("Free:");
-                                ui.label(format!("{} GB", free_gb));
-                                ui.end_row();
-                            }
-                            
-                            if let Some(temp) = storage.temperature {
+                            if let Some(temp) = device.temperature {
                                 ui.label("Temperature:");
                                 ui.colored_label(
                                     temp_color(temp),
@@ -504,14 +481,46 @@ fn draw_storage_info(ui: &mut Ui, state: &AppState) {
                                 );
                                 ui.end_row();
                             }
-                            
-                            ui.label("");
-                            ui.separator();
-                            ui.end_row();
                         }
                     });
             } else {
                 ui.label("No storage devices detected");
+            }
+        });
+}
+
+fn draw_mount_info(ui: &mut Ui, state: &AppState) {
+    CollapsingHeader::new(RichText::new("🖴 Mounts").heading())
+        .default_open(true)
+        .show(ui, |ui| {
+            if !state.mount_info.is_empty() {
+                Grid::new("mount_grid")
+                    .num_columns(2)
+                    .spacing([40.0, 8.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for mount in &state.mount_info {
+                            ui.label(RichText::new(&mount.mount_point).strong());
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    ProgressBar::new(mount.used_percent as f32 / 100.0)
+                                        .text(format!("{:.1}%", mount.used_percent))
+                                        .desired_width(200.0)
+                                );
+                            });
+                            ui.end_row();
+                            
+                            ui.label("Usage:");
+                            ui.label(format!("{} GB / {} GB", mount.used_gb, mount.total_gb));
+                            ui.end_row();
+
+                            ui.label("Filesystem:");
+                            ui.label(&mount.filesystem_type);
+                            ui.end_row();
+                        }
+                    });
+            } else {
+                ui.label("No mounts detected");
             }
         });
 }
@@ -568,63 +577,4 @@ fn draw_fan_info(ui: &mut Ui, state: &AppState) {
                 ui.label("No fan information available");
             }
         });
-}
-
-fn get_free_space(device: &str) -> Result<u64, std::io::Error> {
-    use systemstat::{System, Platform};
-    
-    let sys = System::new();
-    
-    // Try to get mount point for this device
-    let mount_point = if let Ok(output) = std::process::Command::new("findmnt")
-        .args(&["-n", "-o", "TARGET", "--source", device])
-        .output()
-    {
-        if output.status.success() {
-            let mp = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !mp.is_empty() {
-                Some(mp)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    
-    // If findmnt didn't work, try to match by checking common paths
-    let mount_point = mount_point.or_else(|| {
-        // Check common mount points
-        for path in &["/", "/home", "/boot", "/mnt", "/media"] {
-            if let Ok(output) = std::process::Command::new("df")
-                .args(&[path])
-                .output()
-            {
-                if output.status.success() {
-                    let output_str = String::from_utf8_lossy(&output.stdout);
-                    if output_str.contains(device) {
-                        return Some(path.to_string());
-                    }
-                }
-            }
-        }
-        None
-    });
-    
-    let mount_point = mount_point.ok_or_else(|| 
-        std::io::Error::new(std::io::ErrorKind::NotFound, "No mount point found")
-    )?;
-    
-    // Use systemstat to get filesystem info
-    match sys.mount_at(&mount_point) {
-        Ok(mount) => {
-            let free_bytes = mount.avail.as_u64();
-            Ok(free_bytes / 1_000_000_000)
-        }
-        Err(e) => {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, format!("systemstat error: {}", e)))
-        }
-    }
 }

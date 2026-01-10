@@ -1,6 +1,5 @@
 use egui::{Ui, ScrollArea, RichText, Slider, ComboBox, Context};
 use crate::app::AppState;
-use crate::dbus_client::DbusClient;
 use crate::theme::TuxedoTheme;
 
 pub fn draw(ui: &mut Ui, state: &mut AppState, theme: &mut TuxedoTheme, ctx: &Context) {
