@@ -8,5 +8,5 @@ edition = "2021"
 license = "GPL-2.0"
 
 [workspace.dependencies]
-egui = "0.28.0"
-eframe = "0.28.0"
+egui = "0.29.0"
+eframe = "0.29.0"

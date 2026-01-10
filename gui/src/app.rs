@@ -27,7 +27,8 @@ pub struct AppState {
     pub battery_info: Option<BatteryInfo>,
     pub wifi_info: Vec<WiFiInfo>,
     pub fan_info: Vec<FanInfo>,
-    pub storage_info: Vec<StorageInfo>,
+    pub storage_device_info: Vec<StorageDevice>,
+    pub mount_info: Vec<MountInfo>,
     pub available_start_thresholds: Vec<u8>,
     pub available_end_thresholds: Vec<u8>,
     
@@ -60,7 +61,8 @@ impl AppState {
             battery_info: None,
             wifi_info: Vec::new(),
             fan_info: Vec::new(),
-            storage_info: Vec::new(),
+            storage_device_info: Vec::new(),
+            mount_info: Vec::new(),
             available_start_thresholds: Vec::new(),
             available_end_thresholds: Vec::new(),
             current_page: Page::Statistics,
@@ -128,7 +130,8 @@ pub enum HardwareUpdate {
     BatteryInfo(BatteryInfo),
     WifiInfo(Vec<WiFiInfo>),
     FanInfo(Vec<FanInfo>),
-    StorageInfo(Vec<StorageInfo>),
+    StorageDeviceInfo(Vec<StorageDevice>),
+    MountInfo(Vec<MountInfo>),
     AvailableThresholds(Vec<u8>, Vec<u8>),
     Error(String),
 }
@@ -158,6 +161,15 @@ impl TuxedoApp {
         let (hw_update_tx, hw_update_rx) = mpsc::unbounded_channel();
         if let Some(ref client) = dbus_client {
             start_background_polling(client.clone(), hw_update_tx.clone(), &state.config);
+
+            // Initial system info load
+            let client_clone = client.clone();
+            let tx_clone = hw_update_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(Ok(info)) = client_clone.get_system_info().await {
+                    let _ = tx_clone.send(HardwareUpdate::SystemInfo(info));
+                }
+            });
 
             // Fetch available thresholds
             let client_clone = client.clone();
@@ -209,8 +221,11 @@ impl TuxedoApp {
                 HardwareUpdate::FanInfo(info) => {
                     self.state.fan_info = info;
                 }
-                HardwareUpdate::StorageInfo(info) => {
-                    self.state.storage_info = info;
+                HardwareUpdate::StorageDeviceInfo(info) => {
+                    self.state.storage_device_info = info;
+                }
+                HardwareUpdate::MountInfo(info) => {
+                    self.state.mount_info = info;
                 }
                 HardwareUpdate::AvailableThresholds(start, end) => {
                     self.state.available_start_thresholds = start;
@@ -309,85 +324,58 @@ impl eframe::App for TuxedoApp {
             }
         });
         
-        // Request continuous repaint for real-time updates
-        ctx.request_repaint();
+        // Request repaint if there are pending updates
+        ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 
 fn start_background_polling(
     client: DbusClient,
     tx: mpsc::UnboundedSender<HardwareUpdate>,
-    config: &AppConfig,
+    _config: &AppConfig,
 ) {
     tokio::spawn(async move {
-        let mut cpu_interval = tokio::time::interval(Duration::from_millis(1000));
-        let mut gpu_interval = tokio::time::interval(Duration::from_millis(2000));
-        let mut battery_interval = tokio::time::interval(Duration::from_millis(5000));
-        let mut wifi_interval = tokio::time::interval(Duration::from_millis(2000));
-        let mut storage_interval = tokio::time::interval(Duration::from_millis(30000));
-        let mut fans_interval = tokio::time::interval(Duration::from_millis(1000));
-        
-        // Initial system info load
-        tokio::spawn({
-            let client = client.clone();
-            let tx = tx.clone();
-            async move {
-                if let Ok(Ok(info)) = client.get_system_info().await {
-                    let _ = tx.send(HardwareUpdate::SystemInfo(info));
-                }
-            }
-        });
+        let mut interval = tokio::time::interval(Duration::from_millis(1000));
         
         loop {
-            tokio::select! {
-                _ = cpu_interval.tick() => {
-                    let client = client.clone();
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        if let Ok(Ok(info)) = client.get_cpu_info().await {
-                            let _ = tx.send(HardwareUpdate::CpuInfo(info));
-                        }
-                    });
+            interval.tick().await;
+
+            let client = client.clone();
+            let tx = tx.clone();
+
+            tokio::spawn(async move {
+                let (cpu, gpu, fans, battery, wifi, storage_device, mount) = tokio::join!(
+                    client.get_cpu_info(),
+                    client.get_gpu_info(),
+                    client.get_fan_info(),
+                    client.get_battery_info(),
+                    client.get_wifi_info(),
+                    client.get_storage_device_info(),
+                    client.get_mount_info()
+                );
+
+                if let Ok(Ok(info)) = cpu {
+                    let _ = tx.send(HardwareUpdate::CpuInfo(info));
                 }
-                
-                _ = fans_interval.tick() => {
-                    let client = client.clone();
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        if let Ok(Ok(info)) = client.get_fan_info().await {
-                            let _ = tx.send(HardwareUpdate::FanInfo(info));
-                        }
-                    });
+                if let Ok(Ok(info)) = gpu {
+                    let _ = tx.send(HardwareUpdate::GpuInfo(info));
                 }
-                
-                _ = gpu_interval.tick() => {
-                    let client = client.clone();
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        if let Ok(Ok(info)) = client.get_gpu_info().await {
-                            let _ = tx.send(HardwareUpdate::GpuInfo(info));
-                        }
-                    });
+                if let Ok(Ok(info)) = fans {
+                    let _ = tx.send(HardwareUpdate::FanInfo(info));
                 }
-                
-                _ = battery_interval.tick() => {
-                    if let Ok(info) = read_battery_info() {
-                        let _ = tx.send(HardwareUpdate::BatteryInfo(info));
-                    }
+                if let Ok(Ok(info)) = battery {
+                    let _ = tx.send(HardwareUpdate::BatteryInfo(info));
                 }
-                
-                _ = wifi_interval.tick() => {
-                    if let Ok(info) = read_wifi_info() {
-                        let _ = tx.send(HardwareUpdate::WifiInfo(info));
-                    }
+                if let Ok(Ok(info)) = wifi {
+                    let _ = tx.send(HardwareUpdate::WifiInfo(info));
                 }
-                
-                _ = storage_interval.tick() => {
-                    if let Ok(info) = read_storage_info() {
-                        let _ = tx.send(HardwareUpdate::StorageInfo(info));
-                    }
+                if let Ok(Ok(info)) = storage_device {
+                    let _ = tx.send(HardwareUpdate::StorageDeviceInfo(info));
                 }
-            }
+                if let Ok(Ok(info)) = mount {
+                    let _ = tx.send(HardwareUpdate::MountInfo(info));
+                }
+            });
         }
     });
 }
@@ -406,221 +394,4 @@ fn save_config_to_disk(config: &AppConfig) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(config)?;
     std::fs::write(config_path, json)?;
     Ok(())
-}
-
-fn read_battery_info() -> anyhow::Result<BatteryInfo> {
-    use std::fs;
-    let base = if std::path::Path::new("/sys/class/power_supply/BAT0").exists() {
-        "/sys/class/power_supply/BAT0"
-    } else {
-        "/sys/class/power_supply/BAT1"
-    };
-    
-    Ok(BatteryInfo {
-        voltage_mv: read_sysfs_u64(&format!("{}/voltage_now", base))? / 1000,
-        current_ma: read_sysfs_i64(&format!("{}/current_now", base))? / 1000,
-        charge_percent: read_sysfs_u64(&format!("{}/capacity", base))?,
-        capacity_mah: read_sysfs_u64(&format!("{}/charge_full", base))? / 1000,
-        manufacturer: read_sysfs_string(&format!("{}/manufacturer", base))?,
-        model: read_sysfs_string(&format!("{}/model_name", base))?,
-        charge_start_threshold: read_sysfs_u64(&format!("{}/charge_control_start_threshold", base)).ok().map(|v| v as u8),
-        charge_end_threshold: read_sysfs_u64(&format!("{}/charge_control_end_threshold", base)).ok().map(|v| v as u8),
-    })
-}
-
-fn read_wifi_info() -> anyhow::Result<Vec<WiFiInfo>> {
-    use std::fs;
-    use std::process::Command;
-    
-    let mut wifi_devices = Vec::new();
-    let net_path = std::path::Path::new("/sys/class/net");
-    
-    for entry in fs::read_dir(net_path)? {
-        let entry = entry?;
-        let interface = entry.file_name().to_string_lossy().to_string();
-        
-        let wireless_path = format!("/sys/class/net/{}/wireless", interface);
-        if !std::path::Path::new(&wireless_path).exists() {
-            continue;
-        }
-        
-        let driver_path = format!("/sys/class/net/{}/device/driver/module", interface);
-        let driver = if let Ok(link) = fs::read_link(&driver_path) {
-            link.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string()
-        } else {
-            "unknown".to_string()
-        };
-        
-        let temp_path = format!("/sys/class/net/{}/device/hwmon", interface);
-        let temperature = if let Ok(hwmon_entries) = fs::read_dir(&temp_path) {
-            let mut temp = None;
-            for hwmon_entry in hwmon_entries.flatten() {
-                let temp_input_path = hwmon_entry.path().join("temp1_input");
-                if let Ok(temp_str) = fs::read_to_string(&temp_input_path) {
-                    if let Ok(temp_millidegrees) = temp_str.trim().parse::<i32>() {
-                        temp = Some(temp_millidegrees as f32 / 1000.0);
-                        break;
-                    }
-                }
-            }
-            temp
-        } else {
-            None
-        };
-        
-        let signal_level = read_wifi_signal(&interface);
-        let (channel, channel_width) = read_wifi_channel(&interface);
-        let (tx_rate, rx_rate) = read_wifi_rates(&interface);
-        
-        wifi_devices.push(WiFiInfo {
-            interface,
-            driver,
-            temperature,
-            signal_level,
-            channel,
-            channel_width,
-            tx_rate,
-            rx_rate,
-        });
-    }
-    
-    Ok(wifi_devices)
-}
-
-fn read_wifi_signal(interface: &str) -> Option<i32> {
-    if let Ok(wireless) = std::fs::read_to_string("/proc/net/wireless") {
-        for line in wireless.lines().skip(2) {
-            if line.contains(interface) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 4 {
-                    if let Ok(signal) = parts[3].trim_end_matches('.').parse::<i32>() {
-                        return Some(signal);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn read_wifi_channel(interface: &str) -> (Option<u32>, Option<u32>) {
-    if let Ok(output) = std::process::Command::new("iw")
-        .args(&["dev", interface, "info"])
-        .output()
-    {
-        if output.status.success() {
-            let info = String::from_utf8_lossy(&output.stdout);
-            let mut channel = None;
-            let mut width = None;
-            
-            for line in info.lines() {
-                if line.contains("channel") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    for (i, part) in parts.iter().enumerate() {
-                        if *part == "channel" && i + 1 < parts.len() {
-                            channel = parts[i + 1].parse().ok();
-                        }
-                        if *part == "width:" && i + 1 < parts.len() {
-                            width = parts[i + 1].trim_end_matches(',').parse().ok();
-                        }
-                    }
-                }
-            }
-            
-            return (channel, width);
-        }
-    }
-    (None, None)
-}
-
-fn read_wifi_rates(interface: &str) -> (Option<f64>, Option<f64>) {
-    if let Ok(output) = std::process::Command::new("iw")
-        .args(&["dev", interface, "link"])
-        .output()
-    {
-        if output.status.success() {
-            let info = String::from_utf8_lossy(&output.stdout);
-            for line in info.lines() {
-                if line.contains("tx bitrate:") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    for (i, part) in parts.iter().enumerate() {
-                        if (*part == "bitrate:" || *part == "tx" || *part == "rx") && i + 1 < parts.len() {
-                            if let Ok(rate) = parts[i + 1].parse::<f64>() {
-                                return (Some(rate), Some(rate));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    (None, None)
-}
-
-fn read_storage_info() -> anyhow::Result<Vec<StorageInfo>> {
-    use std::fs;
-    let mut storage_devices = Vec::new();
-    
-    for entry in fs::read_dir("/sys/block")? {
-        let entry = entry?;
-        let dev_name = entry.file_name().to_string_lossy().to_string();
-        
-        if dev_name.starts_with("loop") || dev_name.starts_with("ram") {
-            continue;
-        }
-        
-        let path = entry.path();
-        let model = fs::read_to_string(path.join("device/model"))
-            .unwrap_or_else(|_| dev_name.clone())
-            .trim()
-            .to_string();
-        
-        let size_gb = if let Ok(size_str) = fs::read_to_string(path.join("size")) {
-            if let Ok(sectors) = size_str.trim().parse::<u64>() {
-                (sectors * 512) / 1_000_000_000
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-        
-        // Try to read temperature from hwmon
-        let mut temperature = None;
-        if let Ok(hwmon_entries) = fs::read_dir(path.join("device/hwmon")) {
-            for hwmon_entry in hwmon_entries.flatten() {
-                let temp_input = hwmon_entry.path().join("temp1_input");
-                if let Ok(temp_str) = fs::read_to_string(&temp_input) {
-                    if let Ok(temp_millidegrees) = temp_str.trim().parse::<i32>() {
-                        temperature = Some(temp_millidegrees as f32 / 1000.0);
-                        break;
-                    }
-                }
-            }
-        }
-        
-        storage_devices.push(StorageInfo {
-            device: format!("/dev/{}", dev_name),
-            model,
-            size_gb,
-            temperature,
-        });
-    }
-    
-    Ok(storage_devices)
-}
-
-fn read_sysfs_u64(path: &str) -> anyhow::Result<u64> {
-    Ok(std::fs::read_to_string(path)?.trim().parse()?)
-}
-
-fn read_sysfs_i64(path: &str) -> anyhow::Result<i64> {
-    Ok(std::fs::read_to_string(path)?.trim().parse()?)
-}
-
-fn read_sysfs_string(path: &str) -> anyhow::Result<String> {
-    Ok(std::fs::read_to_string(path)?.trim().to_string())
 }

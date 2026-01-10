@@ -25,8 +25,8 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Check hardware interface
-    if tuxedo_io::TuxedoIo::is_available() {
+    // Initialize hardware interfaces
+    let tuxedo_io = if tuxedo_io::TuxedoIo::is_available() {
         match tuxedo_io::TuxedoIo::new() {
             Ok(io) => {
                 let interface = match io.get_interface() {
@@ -36,14 +36,17 @@ async fn main() -> Result<()> {
                 };
                 log::info!("Detected hardware interface: {}", interface);
                 log::info!("Number of fans: {}", io.get_fan_count());
+                Some(io)
             }
             Err(e) => {
                 log::warn!("Failed to initialize tuxedo_io: {}", e);
+                None
             }
         }
     } else {
         log::warn!("/dev/tuxedo_io not available - some features will be disabled");
-    }
+        None
+    };
 
     // Check battery charge control
     if battery_control::BatteryControl::is_available() {
@@ -53,27 +56,12 @@ async fn main() -> Result<()> {
     }
 
     // Start fan daemon in background
-    tokio::spawn(async {
-        log::info!("Starting fan control daemon");
-        loop {
-            // Check if fan control is enabled
-            let settings = {
-                let state = FAN_DAEMON_STATE.lock().unwrap();
-                state.clone()
-            };
-            
-            if let Some(fan_settings) = settings {
-                if fan_settings.control_enabled {
-                    if let Err(e) = apply_fan_curves(&fan_settings) {
-                        log::error!("Failed to apply fan curves: {}", e);
-                    }
-                }
-            }
-            
-            // Poll every 2 seconds
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        }
-    });
+    if let Some(io) = tuxedo_io {
+        let fan_io = Arc::new(io);
+        tokio::spawn(async move {
+            fan_daemon_task(fan_io).await;
+        });
+    }
 
     // Start DBus service
     let connection = zbus::Connection::system().await?;
@@ -88,19 +76,47 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn apply_fan_curves(settings: &FanSettings) -> Result<()> {
-    if !tuxedo_io::TuxedoIo::is_available() {
-        return Ok(());
+async fn fan_daemon_task(io: Arc<tuxedo_io::TuxedoIo>) {
+    log::info!("Starting fan control daemon");
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+    let mut last_settings: Option<FanSettings> = None;
+    let mut sorted_curves: Vec<Vec<(u8, u8)>> = Vec::new();
+
+    loop {
+        interval.tick().await;
+
+        let settings = {
+            let state = FAN_DAEMON_STATE.lock().unwrap();
+            state.clone()
+        };
+
+        if settings != last_settings {
+            if let Some(ref s) = settings {
+                sorted_curves = s.curves.iter().map(|c| {
+                    let mut points = c.points.clone();
+                    points.sort_by_key(|p| p.0);
+                    points
+                }).collect();
+            }
+            last_settings = settings;
+        }
+
+        if let Some(ref fan_settings) = last_settings {
+            if fan_settings.control_enabled {
+                if let Err(e) = apply_fan_curves(&io, fan_settings, &sorted_curves) {
+                    log::error!("Failed to apply fan curves: {}", e);
+                }
+            }
+        }
     }
-    
-    let io = tuxedo_io::TuxedoIo::new()?;
-    
-    for curve in &settings.curves {
+}
+
+fn apply_fan_curves(io: &tuxedo_io::TuxedoIo, settings: &FanSettings, sorted_curves: &[Vec<(u8, u8)>]) -> Result<()> {
+    for (i, curve) in settings.curves.iter().enumerate() {
         if curve.fan_id >= io.get_fan_count() {
             continue;
         }
         
-        // Get current temperature for this fan
         let temp = match io.get_fan_temperature(curve.fan_id) {
             Ok(t) => t as f32,
             Err(e) => {
@@ -109,10 +125,8 @@ fn apply_fan_curves(settings: &FanSettings) -> Result<()> {
             }
         };
         
-        // Calculate speed from curve
-        let speed = calculate_fan_speed(&curve.points, temp);
+        let speed = calculate_fan_speed(&sorted_curves[i], temp);
         
-        // Apply speed
         if let Err(e) = io.set_fan_speed(curve.fan_id, speed as u32) {
             log::error!("Failed to set fan {} speed: {}", curve.fan_id, e);
         } else {
@@ -123,30 +137,23 @@ fn apply_fan_curves(settings: &FanSettings) -> Result<()> {
     Ok(())
 }
 
-fn calculate_fan_speed(points: &[(u8, u8)], temp: f32) -> u8 {
-    if points.is_empty() {
+fn calculate_fan_speed(sorted_points: &[(u8, u8)], temp: f32) -> u8 {
+    if sorted_points.is_empty() {
         return 50; // Default fallback
     }
     
-    if points.len() == 1 {
-        return points[0].1;
+    if sorted_points.len() == 1 {
+        return sorted_points[0].1;
     }
     
-    // Sort points by temperature
-    let mut sorted_points = points.to_vec();
-    sorted_points.sort_by_key(|p| p.0);
-    
-    // Below first point
     if temp <= sorted_points[0].0 as f32 {
         return sorted_points[0].1;
     }
     
-    // Above last point
     if temp >= sorted_points[sorted_points.len() - 1].0 as f32 {
         return sorted_points[sorted_points.len() - 1].1;
     }
     
-    // Linear interpolation between points
     for i in 0..sorted_points.len() - 1 {
         let (temp1, speed1) = sorted_points[i];
         let (temp2, speed2) = sorted_points[i + 1];

@@ -30,6 +30,30 @@ impl ControlInterface {
         }
     }
 
+    async fn get_battery_info(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_battery_info() {
+            Ok(info) => serde_json::to_string(&info)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
+    async fn get_storage_device_info(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_storage_device_info() {
+            Ok(info) => serde_json::to_string(&info)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
+    async fn get_mount_info(&self) -> Result<String, zbus::fdo::Error> {
+        match crate::hardware_detection::get_mount_info() {
+            Ok(info) => serde_json::to_string(&info)
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string())),
+            Err(e) => Err(zbus::fdo::Error::Failed(e.to_string())),
+        }
+    }
+
     async fn get_wifi_info(&self) -> Result<String, zbus::fdo::Error> {
         match crate::hardware_detection::get_wifi_info() {
             Ok(info) => serde_json::to_string(&info)

@@ -116,11 +116,20 @@ pub struct WiFiInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageInfo {
+pub struct StorageDevice {
     pub device: String,
     pub model: String,
     pub size_gb: u64,
     pub temperature: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountInfo {
+    pub mount_point: String,
+    pub filesystem_type: String,
+    pub total_gb: u64,
+    pub used_gb: u64,
+    pub used_percent: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,7 +186,7 @@ pub struct ScreenSettings {
     pub system_control: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FanSettings {
     pub control_enabled: bool,
     pub curves: Vec<FanCurve>,
@@ -190,7 +199,7 @@ pub struct BatterySettings {
     pub charge_end_threshold: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FanCurve {
     pub fan_id: u32,
     pub points: Vec<(u8, u8)>, // (temperature, speed) - 8 points

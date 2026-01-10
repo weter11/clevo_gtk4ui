@@ -1,7 +1,6 @@
 use anyhow::Result;
 use tuxedo_common::types::*;
 use zbus::Connection;
-use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
@@ -15,6 +14,10 @@ pub enum DbusCommand {
     GetCpuInfo { reply: oneshot::Sender<Result<CpuInfo>> },
     GetGpuInfo { reply: oneshot::Sender<Result<Vec<GpuInfo>>> },
     GetFanInfo { reply: oneshot::Sender<Result<Vec<FanInfo>>> },
+    GetBatteryInfo { reply: oneshot::Sender<Result<BatteryInfo>> },
+    GetStorageDeviceInfo { reply: oneshot::Sender<Result<Vec<StorageDevice>>> },
+    GetMountInfo { reply: oneshot::Sender<Result<Vec<MountInfo>>> },
+    GetWifiInfo { reply: oneshot::Sender<Result<Vec<WiFiInfo>>> },
     ApplyProfile { profile: Profile, reply: oneshot::Sender<Result<()>> },
     SetCpuGovernor { governor: String, reply: oneshot::Sender<Result<()>> },
     SetCpuBoost { enabled: bool, reply: oneshot::Sender<Result<()>> },
@@ -63,6 +66,30 @@ impl DbusClient {
     pub fn get_fan_info(&self) -> oneshot::Receiver<Result<Vec<FanInfo>>> {
         let (tx, rx) = oneshot::channel();
         let _ = self.command_tx.send(DbusCommand::GetFanInfo { reply: tx });
+        rx
+    }
+
+    pub fn get_battery_info(&self) -> oneshot::Receiver<Result<BatteryInfo>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetBatteryInfo { reply: tx });
+        rx
+    }
+
+    pub fn get_storage_device_info(&self) -> oneshot::Receiver<Result<Vec<StorageDevice>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetStorageDeviceInfo { reply: tx });
+        rx
+    }
+
+    pub fn get_mount_info(&self) -> oneshot::Receiver<Result<Vec<MountInfo>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetMountInfo { reply: tx });
+        rx
+    }
+
+    pub fn get_wifi_info(&self) -> oneshot::Receiver<Result<Vec<WiFiInfo>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.command_tx.send(DbusCommand::GetWifiInfo { reply: tx });
         rx
     }
     
@@ -143,6 +170,22 @@ async fn dbus_worker(mut command_rx: mpsc::UnboundedReceiver<DbusCommand>) -> Re
             }
             DbusCommand::GetFanInfo { reply } => {
                 let result = get_fan_info_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetBatteryInfo { reply } => {
+                let result = get_battery_info_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetStorageDeviceInfo { reply } => {
+                let result = get_storage_device_info_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetMountInfo { reply } => {
+                let result = get_mount_info_impl(&connection).await;
+                let _ = reply.send(result);
+            }
+            DbusCommand::GetWifiInfo { reply } => {
+                let result = get_wifi_info_impl(&connection).await;
                 let _ = reply.send(result);
             }
             DbusCommand::ApplyProfile { profile, reply } => {
@@ -233,6 +276,54 @@ async fn get_fan_info_impl(conn: &Connection) -> Result<Vec<FanInfo>> {
     ).await?;
     
     let json: String = proxy.call("GetFanInfo", &()).await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn get_battery_info_impl(conn: &Connection) -> Result<BatteryInfo> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetBatteryInfo", &()).await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn get_storage_device_info_impl(conn: &Connection) -> Result<Vec<StorageDevice>> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetStorageDeviceInfo", &()).await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn get_mount_info_impl(conn: &Connection) -> Result<Vec<MountInfo>> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetMountInfo", &()).await?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+async fn get_wifi_info_impl(conn: &Connection) -> Result<Vec<WiFiInfo>> {
+    let proxy = zbus::Proxy::new(
+        conn,
+        "com.tuxedo.Control",
+        "/com/tuxedo/Control",
+        "com.tuxedo.Control",
+    ).await?;
+
+    let json: String = proxy.call("GetWifiInfo", &()).await?;
     Ok(serde_json::from_str(&json)?)
 }
 
